@@ -4,7 +4,6 @@ import {
   SECONDS_PER_CREDIT,
   MAX_CALL_SECONDS,
   type Entitlement,
-  type CallAuthorization,
 } from "@cold-call-gym/shared";
 import { createServiceRoleClient } from "../supabase/service";
 
@@ -66,22 +65,41 @@ export async function getEntitlement(userId: string): Promise<Entitlement> {
   };
 }
 
+export type CallAuthorizationCore = {
+  sessionId: string;
+  scenarioId: string;
+  state: "authorized";
+  maxAllowedSeconds: number;
+  freeSecondsRemaining: number;
+  paidCreditsRemaining: number;
+};
+
 export type AuthorizeCallResult =
-  | { authorization: CallAuthorization }
+  | { authorization: CallAuthorizationCore }
   | { error: "scenario_not_found" }
   | { error: "no_entitlement"; entitlement: Entitlement };
 
 /**
- * Server-side foundation for authorizing a future voice call (Phase 2). This
- * only validates entitlement and creates the `call_sessions` row — it does
- * NOT connect to a voice provider or issue a signed gateway token; that
- * arrives with the real voice-gateway integration in Phase 3.
+ * Server-side foundation for authorizing a future voice call. Validates
+ * entitlement and creates the `call_sessions` row in state `authorized`.
+ * Does NOT itself connect to a voice provider or sign the gateway token —
+ * signing happens in the API route (lib/server/voice-token.ts) so this
+ * module stays focused on entitlement/DB concerns. The signed token is what
+ * lets the browser open exactly one voice-gateway WebSocket connection for
+ * this session; the gateway re-validates the session's live DB state before
+ * starting anything.
  *
  * This is a soft gate: it reads the current entitlement and rejects when
  * usable time is zero, but doesn't debit anything, so a benign race between
- * two concurrent authorize calls isn't a financial risk. The HARD,
- * atomic gate is finalizeCallUsage() below, which is the only place credits
- * actually get spent.
+ * two concurrent authorize calls isn't a financial risk. The HARD, atomic
+ * gate is the finalize_call_usage() Postgres RPC
+ * (supabase/migrations/003_entitlement_foundation.sql) — as of Phase 3 the
+ * voice gateway (services/voice-gateway/src/lib/entitlement.ts) is the only
+ * caller, using its own service-role credentials and its own
+ * gateway-timed duration. The web app deliberately does NOT expose an HTTP
+ * endpoint that lets the browser submit a duration for finalization; that
+ * was a Phase 2 development convenience and has been removed now that the
+ * gateway is authoritative.
  */
 export async function authorizeCallSession(
   userId: string,
@@ -128,72 +146,3 @@ export async function authorizeCallSession(
   };
 }
 
-export type FinalizeUsageResult = {
-  sessionId: string;
-  state: string;
-  durationSeconds: number;
-  freeSecondsUsed: number;
-  paidCreditsUsed: number;
-  alreadyFinalized: boolean;
-};
-
-/**
- * The single authoritative, atomic, idempotent usage-debit path. Delegates
- * the actual balance math to the finalize_call_usage() Postgres function
- * (supabase/migrations/003_entitlement_foundation.sql), which:
- *   - locks the session row (`for update`) so duplicate finalize calls for
- *     the SAME session serialize and the loser gets the idempotent result
- *     instead of double-charging;
- *   - takes a per-user Postgres advisory lock so concurrent finalize calls
- *     across DIFFERENT sessions belonging to the same user can't both read
- *     a stale credit balance and overspend it;
- *   - clamps the claimed duration to wall-clock time elapsed since the
- *     session was created, as a backstop against an implausible
- *     client-reported value.
- *
- * `claimedDurationSeconds` is client-reported presentation state (the mock
- * call UI's own timer) and is NEVER trusted as-is — it is only an upper
- * bound the database may clamp further down. True server-metered duration
- * arrives with the Phase 3 voice-gateway integration.
- */
-export async function finalizeCallUsage(params: {
-  userId: string;
-  sessionId: string;
-  claimedDurationSeconds: number;
-}): Promise<FinalizeUsageResult> {
-  const supabase = createServiceRoleClient();
-
-  const { data: session, error: sessionError } = await supabase
-    .from("call_sessions")
-    .select("id, user_id")
-    .eq("id", params.sessionId)
-    .maybeSingle();
-
-  if (sessionError) throw sessionError;
-  if (!session || session.user_id !== params.userId) {
-    throw new Error("session_not_found_or_forbidden");
-  }
-
-  const idempotencyKey = `usage:${params.sessionId}`;
-  const safeDuration = Math.max(0, Math.floor(params.claimedDurationSeconds));
-
-  const { data, error } = await supabase.rpc("finalize_call_usage", {
-    p_session_id: params.sessionId,
-    p_claimed_duration_seconds: safeDuration,
-    p_idempotency_key: idempotencyKey,
-  });
-
-  if (error) throw error;
-
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) throw new Error("finalize_call_usage returned no result");
-
-  return {
-    sessionId: row.session_id,
-    state: row.state,
-    durationSeconds: row.duration_seconds,
-    freeSecondsUsed: row.free_seconds_used,
-    paidCreditsUsed: row.paid_credits_used,
-    alreadyFinalized: row.already_finalized,
-  };
-}

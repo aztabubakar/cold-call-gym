@@ -81,8 +81,74 @@ export const CallAuthorizationSchema = z.object({
   scenarioId: z.string(),
   state: z.literal("authorized"),
   maxAllowedSeconds: z.number(),
+  gatewayUrl: z.string(),
+  token: z.string(),
   freeSecondsRemaining: z.number(),
   paidCreditsRemaining: z.number(),
 });
 
 export type CallAuthorization = z.infer<typeof CallAuthorizationSchema>;
+
+// ---------------------------------------------------------------------------
+// Phase 3: signed voice-gateway token claims.
+//
+// Issued by POST /api/voice/session (apps/web), verified by the voice
+// gateway (services/voice-gateway) using the same shared secret
+// (VOICE_GATEWAY_SIGNING_SECRET). Short-lived (see VOICE_TOKEN_TTL_SECONDS)
+// and scoped to exactly one call_sessions row — it authorizes *connecting*,
+// not spending; the gateway still verifies the session's live DB state
+// before starting a timer, and all billing runs through the same atomic
+// finalize_call_usage() RPC used since Phase 2. maxAllowedSeconds is signed
+// alongside sub/sessionId so the browser can never widen its own quota: an
+// altered claim invalidates the signature.
+// ---------------------------------------------------------------------------
+
+export const VOICE_TOKEN_TTL_SECONDS = 180;
+
+export const VoiceSessionTokenClaimsSchema = z.object({
+  sub: z.string(), // user id
+  sessionId: z.string(),
+  scenarioId: z.string(),
+  maxAllowedSeconds: z.number().int().positive(),
+  iat: z.number().int(),
+  exp: z.number().int(),
+  jti: z.string(),
+});
+
+export type VoiceSessionTokenClaims = z.infer<typeof VoiceSessionTokenClaimsSchema>;
+
+// ---------------------------------------------------------------------------
+// Phase 3: WebSocket event contract between the browser and the voice
+// gateway. Kept separate from services/voice-gateway's internal
+// VoiceProvider events (connected/text/audio/error/closed), which describe
+// the mock/Gemini provider's own lifecycle — the gateway translates those
+// into this richer, session-aware contract.
+// ---------------------------------------------------------------------------
+
+export const ClientToGatewayMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("audio"), data: z.string() }),
+  z.object({ type: z.literal("end") }),
+  z.object({ type: z.literal("ping") }),
+]);
+
+export type ClientToGatewayMessage = z.infer<typeof ClientToGatewayMessageSchema>;
+
+export const GatewayToClientEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("connected") }),
+  z.object({ type: z.literal("active"), sessionId: z.string(), maxAllowedSeconds: z.number() }),
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({ type: z.literal("quota"), remainingSeconds: z.number().min(0) }),
+  z.object({ type: z.literal("quota_exhausted") }),
+  z.object({
+    type: z.literal("completed"),
+    sessionId: z.string(),
+    durationSeconds: z.number().min(0),
+    freeSecondsUsed: z.number().min(0),
+    paidCreditsUsed: z.number().min(0),
+  }),
+  z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
+  z.object({ type: z.literal("closed") }),
+  z.object({ type: z.literal("pong") }),
+]);
+
+export type GatewayToClientEvent = z.infer<typeof GatewayToClientEventSchema>;

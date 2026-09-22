@@ -8,6 +8,9 @@ import {
   ScenarioSchema,
   EntitlementSchema,
   CallAuthorizationSchema,
+  VoiceSessionTokenClaimsSchema,
+  ClientToGatewayMessageSchema,
+  GatewayToClientEventSchema,
 } from "./index.js";
 
 describe("formatDuration", () => {
@@ -91,6 +94,8 @@ describe("CallAuthorizationSchema", () => {
       scenarioId: "scenario-1",
       state: "authorized",
       maxAllowedSeconds: 780,
+      gatewayUrl: "http://localhost:8787",
+      token: "signed.jwt.token",
       freeSecondsRemaining: 480,
       paidCreditsRemaining: 5,
     });
@@ -103,9 +108,74 @@ describe("CallAuthorizationSchema", () => {
       scenarioId: "scenario-1",
       state: "active",
       maxAllowedSeconds: 780,
+      gatewayUrl: "http://localhost:8787",
+      token: "signed.jwt.token",
       freeSecondsRemaining: 480,
       paidCreditsRemaining: 5,
     });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("VoiceSessionTokenClaimsSchema", () => {
+  it("accepts a well-formed claim set", () => {
+    const result = VoiceSessionTokenClaimsSchema.safeParse({
+      sub: "user-1",
+      sessionId: "session-1",
+      scenarioId: "scenario-1",
+      maxAllowedSeconds: 780,
+      iat: 1_700_000_000,
+      exp: 1_700_000_180,
+      jti: "token-1",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a non-positive maxAllowedSeconds (the claim a client can't be allowed to widen)", () => {
+    const result = VoiceSessionTokenClaimsSchema.safeParse({
+      sub: "user-1",
+      sessionId: "session-1",
+      scenarioId: "scenario-1",
+      maxAllowedSeconds: 0,
+      iat: 1_700_000_000,
+      exp: 1_700_000_180,
+      jti: "token-1",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("ClientToGatewayMessageSchema", () => {
+  it("accepts audio/end/ping and nothing else", () => {
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "audio", data: "Zm9v" }).success).toBe(true);
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "end" }).success).toBe(true);
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "ping" }).success).toBe(true);
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "finalize", durationSeconds: 999 }).success).toBe(
+      false,
+    );
+  });
+
+  it("has no field for a client to submit a billable duration", () => {
+    const parsed = ClientToGatewayMessageSchema.parse({ type: "end", durationSeconds: 999_999 });
+    expect(parsed).toEqual({ type: "end" });
+    expect("durationSeconds" in parsed).toBe(false);
+  });
+});
+
+describe("GatewayToClientEventSchema", () => {
+  it("accepts a completed event with nonnegative usage", () => {
+    const result = GatewayToClientEventSchema.safeParse({
+      type: "completed",
+      sessionId: "session-1",
+      durationSeconds: 42,
+      freeSecondsUsed: 42,
+      paidCreditsUsed: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a negative remainingSeconds on a quota event", () => {
+    const result = GatewayToClientEventSchema.safeParse({ type: "quota", remainingSeconds: -1 });
     expect(result.success).toBe(false);
   });
 });

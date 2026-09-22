@@ -61,3 +61,45 @@ User content must not be able to:
   run as two genuinely simultaneous Postgres transactions; the balance
   never went negative and the total charged never exceeded what was
   available. See the Phase 2 development report for the exact run.
+
+## Voice gateway trust boundary (Phase 3)
+
+- `VOICE_GATEWAY_SIGNING_SECRET` is read only in
+  `apps/web/src/lib/server/voice-token.ts` (guarded by `server-only`) and
+  `services/voice-gateway/src/lib/token.ts` (a separate Node process, never
+  bundled to a browser). Verified: no `"use client"` file imports either.
+- The signed voice-session token has a 180-second TTL, carries no secrets
+  and no scenario `hidden_state`, and its `maxAllowedSeconds` claim cannot
+  be altered by the browser — tampering with it invalidates the HMAC
+  signature (verified: `services/voice-gateway/src/lib/token.test.ts`).
+- The gateway does not trust the token's claims beyond authentication: it
+  re-validates the *live* `call_sessions` row (ownership, scenario match,
+  state) before starting anything billable
+  (`services/voice-gateway/src/lib/session-eligibility.ts`). Verified live
+  (`e2e.gateway.test.ts`): a token minted for user A is rejected against
+  user B's session (`forbidden`); a token for an already-`completed`
+  session is rejected (`conflict`); a second connection attempt while a
+  session is still active is rejected (`conflict`).
+- The browser cannot submit a billable duration anywhere. The Phase 2
+  `POST /api/voice/session/:id/finalize` development endpoint has been
+  **removed**; the client→gateway WebSocket message schema
+  (`ClientToGatewayMessageSchema`) has no duration field at all. Billing
+  duration comes only from the gateway's own monotonic clock
+  (`process.hrtime.bigint()`), verified in
+  `services/voice-gateway/src/session-runtime.test.ts` by asserting the
+  finalize call always uses the gateway-clock-derived value even when a
+  test message carries a spoofed `durationSeconds` field.
+- The gateway is the only additional caller of `finalize_call_usage()`
+  beyond the (now-removed) web endpoint; it authenticates to Postgres with
+  its own `SUPABASE_SERVICE_ROLE_KEY` (a separate env var on the gateway
+  process, never shared with the browser) and is subject to the exact same
+  atomicity/idempotency/role-lockdown guarantees documented above and in
+  `supabase/migrations/003_entitlement_foundation.sql` — nothing about
+  that RPC's security model changed for Phase 3.
+- Finalization is guarded twice over: once in-process
+  (`CallSessionRuntime`'s single-flight `endPromise`, so explicit `end`,
+  socket close, and quota cutoff racing each other only run the finalize
+  logic once) and once in the database (the RPC's idempotency key). Both
+  are covered by tests, including a genuine same-process race
+  (`session-runtime.test.ts`, "does not double-finalize when explicit end
+  and socket close race").

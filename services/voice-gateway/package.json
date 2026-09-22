@@ -11,8 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cold-call-gym/shared": "workspace:*",
     "@fastify/websocket": "^11.0.1",
-    "fastify": "^5.2.0"
+    "@supabase/supabase-js": "^2.47.10",
+    "fastify": "^5.2.0",
+    "jose": "^5.9.6"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

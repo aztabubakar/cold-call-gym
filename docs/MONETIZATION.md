@@ -103,10 +103,12 @@ balance from scratch inside that lock before charging. This was verified
 against a real, concurrently-running pair of Postgres transactions — see
 the Phase 2 development report.
 
-### Connecting to Phase 3 (real voice gateway)
-`POST /api/voice/session` already creates the `authorized` call_sessions row
-and computes `maxAllowedSeconds`; Phase 3 adds a signed, short-lived token
-derived from that authorization for the voice gateway to present, and wires
-the gateway's own server-side timer (instead of the browser's timer used in
-the Phase 2 mock flow) as the source of `claimedDurationSeconds` passed to
-`finalizeCallUsage`. The finalize path itself does not need to change.
+### Connected to the voice gateway (Phase 3)
+`POST /api/voice/session` creates the `authorized` call_sessions row,
+computes `maxAllowedSeconds`, and signs a short-lived token for the voice
+gateway. The gateway is now the source of the duration passed to
+`finalize_call_usage()` (via its own direct RPC call, using its own
+service-role credentials) — not the browser. The finalize path itself
+(the RPC, its atomicity/idempotency guarantees) did not need to change; see
+`docs/ARCHITECTURE.md`'s "Voice session lifecycle (Phase 3)" section for
+the full flow.

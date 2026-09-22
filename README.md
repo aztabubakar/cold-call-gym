@@ -5,21 +5,29 @@ Voice-first AI sales practice SaaS.
 ## Core loop
 Choose scenario → call AI prospect → handle objections → end call → receive coaching → practice again.
 
-## Status: Phase 2 complete (usage entitlement + credit ledger)
+## Status: Phase 3 complete (voice gateway session lifecycle)
 - Phase 1: auth shell, dashboard, scenario browsing/detail, mock call UI,
   Supabase foundation — see git history for details.
 - Phase 2: server-authoritative entitlement (10 free min/day, UTC boundary,
   no reset job), immutable credit ledger, atomic + idempotent usage
   finalization (`finalize_call_usage` Postgres RPC with per-user advisory
   locking), one-time welcome credits, `GET /api/entitlement`,
-  `POST /api/voice/session` (call authorization), and
-  `POST /api/voice/session/:id/finalize`. Dashboard and call pages now show
-  real server-computed balances. See `docs/MONETIZATION.md` and
-  `docs/SECURITY.md` for the full model.
+  `POST /api/voice/session` (call authorization).
+- Phase 3: the voice gateway is now the real, authoritative call pipeline.
+  `POST /api/voice/session` signs a short-lived JWT
+  (`VOICE_GATEWAY_SIGNING_SECRET`) the browser presents to open a
+  WebSocket at `services/voice-gateway`; the gateway verifies the token,
+  re-validates the session against the live database, meters active call
+  time with its own monotonic clock, enforces `maxAllowedSeconds`
+  (capped by the gateway's own `MAX_CALL_SECONDS`), and finalizes usage
+  itself via the same Phase 2 RPC — the browser can no longer submit a
+  duration for billing anywhere (the Phase 2 finalize endpoint was
+  removed). See `docs/ARCHITECTURE.md` for the full lifecycle diagram and
+  `docs/SECURITY.md` for the trust-boundary details.
 
 Not yet implemented (later phases — see `docs/CLAUDE_CODE_PLAN.md`):
-real Gemini Live transport, signed voice-gateway tokens, Stripe
-checkout/webhooks, the full coaching evaluator, production deployment.
+real Gemini Live transport, Stripe checkout/webhooks, the full coaching
+evaluator, production deployment.
 
 ## Architecture
 - `apps/web`: Next.js + TypeScript
@@ -59,6 +67,13 @@ of live data.
 To exercise the Phase 2 entitlement/ledger logic against a real Postgres
 server (no Supabase project needed), see
 `supabase/tests/phase2_entitlement.sql`.
+
+Fill in `services/voice-gateway/.env` too (copied from `.env.example`):
+`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` (same project as above, no
+`NEXT_PUBLIC_` prefix needed since the gateway is a trusted server) and
+`VOICE_GATEWAY_SIGNING_SECRET` (must match the web app's value exactly —
+it's how the gateway verifies a call session token actually came from your
+web server).
 
 ```bash
 pnpm dev:web
