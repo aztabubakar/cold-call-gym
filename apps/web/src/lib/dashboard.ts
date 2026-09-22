@@ -1,6 +1,6 @@
-import { DAILY_FREE_SECONDS } from "@cold-call-gym/shared";
-import { usableSeconds } from "./entitlement";
+import { DAILY_FREE_SECONDS, type Entitlement } from "@cold-call-gym/shared";
 import { createClient } from "./supabase/server";
+import { getEntitlement } from "./server/entitlement";
 
 export type RecentSession = {
   id: string;
@@ -17,66 +17,29 @@ export type RecommendedScenario = {
   objective: string;
 };
 
-export type DashboardData = {
-  freeSecondsRemaining: number;
-  paidCreditsRemaining: number;
-  usableSeconds: number;
+export type DashboardData = Entitlement & {
   callsThisWeek: number;
   recentSessions: RecentSession[];
   recommended: RecommendedScenario[];
   supabaseConfigured: boolean;
 };
 
-const EMPTY_DASHBOARD: DashboardData = {
+const EMPTY_ENTITLEMENT: Entitlement = {
+  freeDailySeconds: DAILY_FREE_SECONDS,
+  freeSecondsUsedToday: 0,
   freeSecondsRemaining: DAILY_FREE_SECONDS,
   paidCreditsRemaining: 0,
-  usableSeconds: DAILY_FREE_SECONDS,
+  paidSecondsAvailable: 0,
+  totalUsableSeconds: DAILY_FREE_SECONDS,
+};
+
+const EMPTY_DASHBOARD: DashboardData = {
+  ...EMPTY_ENTITLEMENT,
   callsThisWeek: 0,
   recentSessions: [],
   recommended: [],
   supabaseConfigured: false,
 };
-
-export type EntitlementSnapshot = {
-  freeSecondsRemaining: number;
-  paidCreditsRemaining: number;
-};
-
-export async function getEntitlementSnapshot(userId: string): Promise<EntitlementSnapshot> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return { freeSecondsRemaining: DAILY_FREE_SECONDS, paidCreditsRemaining: 0 };
-  }
-
-  try {
-    const supabase = await createClient();
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
-
-    const [todaySessions, ledger] = await Promise.all([
-      supabase
-        .from("call_sessions")
-        .select("free_seconds_used")
-        .eq("user_id", userId)
-        .gte("created_at", startOfDay.toISOString()),
-      supabase.from("credit_ledger").select("credits_delta").eq("user_id", userId),
-    ]);
-
-    const usedToday = (todaySessions.data ?? []).reduce(
-      (sum, row) => sum + (row.free_seconds_used ?? 0),
-      0,
-    );
-
-    return {
-      freeSecondsRemaining: Math.max(0, DAILY_FREE_SECONDS - usedToday),
-      paidCreditsRemaining: Math.max(
-        0,
-        (ledger.data ?? []).reduce((sum, row) => sum + (row.credits_delta ?? 0), 0),
-      ),
-    };
-  } catch {
-    return { freeSecondsRemaining: DAILY_FREE_SECONDS, paidCreditsRemaining: 0 };
-  }
-}
 
 export async function getDashboardData(userId: string): Promise<DashboardData> {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -84,18 +47,15 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
   }
 
   try {
-    const supabase = await createClient();
+    // Authoritative free/paid balance — same server-only computation used by
+    // GET /api/entitlement and the call-authorization path. Never derive
+    // this from a client-supplied value.
+    const entitlement = await getEntitlement(userId);
 
-    const startOfDay = new Date();
-    startOfDay.setUTCHours(0, 0, 0, 0);
+    const supabase = await createClient();
     const startOfWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const [todaySessions, weekSessions, recentSessions, ledger, scenarios] = await Promise.all([
-      supabase
-        .from("call_sessions")
-        .select("free_seconds_used")
-        .eq("user_id", userId)
-        .gte("created_at", startOfDay.toISOString()),
+    const [weekSessions, recentSessions, scenarios] = await Promise.all([
       supabase
         .from("call_sessions")
         .select("id", { count: "exact", head: true })
@@ -107,24 +67,12 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(5),
-      supabase.from("credit_ledger").select("credits_delta").eq("user_id", userId),
       supabase
         .from("scenarios")
         .select("slug, name, difficulty, objective")
         .eq("is_active", true)
         .limit(3),
     ]);
-
-    const usedToday = (todaySessions.data ?? []).reduce(
-      (sum, row) => sum + (row.free_seconds_used ?? 0),
-      0,
-    );
-    const freeSecondsRemaining = Math.max(0, DAILY_FREE_SECONDS - usedToday);
-
-    const paidCreditsRemaining = Math.max(
-      0,
-      (ledger.data ?? []).reduce((sum, row) => sum + (row.credits_delta ?? 0), 0),
-    );
 
     const recent: RecentSession[] = (recentSessions.data ?? []).map((row) => {
       const scenario = Array.isArray(row.scenarios) ? row.scenarios[0] : row.scenarios;
@@ -138,18 +86,16 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
     });
 
     return {
-      freeSecondsRemaining,
-      paidCreditsRemaining,
-      usableSeconds: usableSeconds({ freeSecondsRemaining, paidCreditsRemaining }),
+      ...entitlement,
       callsThisWeek: weekSessions.count ?? 0,
       recentSessions: recent,
       recommended: scenarios.data ?? [],
       supabaseConfigured: true,
     };
   } catch {
-    // Tables may not exist yet (migration not applied) or the project may be
-    // unreachable in this environment — degrade to a safe empty state rather
-    // than crashing the dashboard.
+    // Tables/RPCs may not exist yet (migration not applied) or the project
+    // may be unreachable in this environment — degrade to a safe empty
+    // state rather than crashing the dashboard.
     return { ...EMPTY_DASHBOARD, supabaseConfigured: true };
   }
 }

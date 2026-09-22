@@ -42,11 +42,15 @@ export default async function DashboardPage() {
       <section className="grid stat-grid">
         <div className="card">
           <div className="metric">{formatDuration(data.freeSecondsRemaining)}</div>
-          <div className="muted">Free minutes remaining today</div>
+          <div className="muted">Today&apos;s free practice remaining</div>
         </div>
         <div className="card">
           <div className="metric">{data.paidCreditsRemaining}</div>
           <div className="muted">Paid credits</div>
+        </div>
+        <div className="card">
+          <div className="metric">{formatDuration(data.totalUsableSeconds)}</div>
+          <div className="muted">Total practice available</div>
         </div>
         <div className="card">
           <div className="metric">{data.callsThisWeek}</div>

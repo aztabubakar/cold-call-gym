@@ -8,18 +8,22 @@
 - migrations + seed
 - tests
 
-## Phase 2 — Entitlement
-- daily allowance
-- immutable credit ledger
-- entitlement API
-- edge-case tests
+## Phase 2 — Entitlement ✅ complete
+- daily allowance (600s/day, UTC boundary, no reset job — see docs/MONETIZATION.md)
+- immutable credit ledger (`finalize_call_usage` Postgres RPC, atomic + idempotent)
+- entitlement API (`GET /api/entitlement`)
+- call authorization foundation (`POST /api/voice/session`)
+- usage finalization (`POST /api/voice/session/[id]/finalize`)
+- one-time welcome credits (5, granted via signup trigger)
+- edge-case tests (client-math unit tests + live-Postgres integration script)
 
 ## Phase 3 — Mock voice gateway
-- signed voice token
-- WebSocket lifecycle
-- timer
+- signed voice token issued by `POST /api/voice/session` (currently returns
+  session metadata only; add the signed gateway token here)
+- WebSocket lifecycle wired to the real authorize/finalize endpoints from
+  Phase 2 instead of the browser's own timer
 - disconnect handling
-- quota cutoff
+- quota cutoff enforced by the gateway using `maxAllowedSeconds`
 
 ## Phase 4 — Gemini Live
 - implement current official Gemini Live transport

@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration, DAILY_FREE_SECONDS, ScenarioSchema } from "./index.js";
+import {
+  formatDuration,
+  DAILY_FREE_SECONDS,
+  SECONDS_PER_CREDIT,
+  MAX_CALL_SECONDS,
+  WELCOME_CREDITS,
+  ScenarioSchema,
+  EntitlementSchema,
+  CallAuthorizationSchema,
+} from "./index.js";
 
 describe("formatDuration", () => {
   it("pads minutes and seconds", () => expect(formatDuration(65)).toBe("01:05"));
@@ -44,6 +53,58 @@ describe("ScenarioSchema", () => {
       hidden_state: {},
       target_duration_seconds: 1,
       is_active: true,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("entitlement constants", () => {
+  it("1 credit = 60 seconds", () => expect(SECONDS_PER_CREDIT).toBe(60));
+  it("MAX_CALL_SECONDS matches the voice-gateway default ceiling", () =>
+    expect(MAX_CALL_SECONDS).toBe(1800));
+  it("welcome grant is 5 credits", () => expect(WELCOME_CREDITS).toBe(5));
+});
+
+describe("EntitlementSchema", () => {
+  it("accepts a well-formed entitlement snapshot", () => {
+    const result = EntitlementSchema.safeParse({
+      freeDailySeconds: 600,
+      freeSecondsUsedToday: 240,
+      freeSecondsRemaining: 360,
+      paidCreditsRemaining: 12,
+      paidSecondsAvailable: 720,
+      totalUsableSeconds: 1080,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a snapshot missing required fields", () => {
+    const result = EntitlementSchema.safeParse({ freeDailySeconds: 600 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("CallAuthorizationSchema", () => {
+  it("accepts a well-formed authorization", () => {
+    const result = CallAuthorizationSchema.safeParse({
+      sessionId: "session-1",
+      scenarioId: "scenario-1",
+      state: "authorized",
+      maxAllowedSeconds: 780,
+      freeSecondsRemaining: 480,
+      paidCreditsRemaining: 5,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a state other than 'authorized'", () => {
+    const result = CallAuthorizationSchema.safeParse({
+      sessionId: "session-1",
+      scenarioId: "scenario-1",
+      state: "active",
+      maxAllowedSeconds: 780,
+      freeSecondsRemaining: 480,
+      paidCreditsRemaining: 5,
     });
     expect(result.success).toBe(false);
   });

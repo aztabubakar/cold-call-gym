@@ -17,7 +17,8 @@
     "@supabase/supabase-js": "^2.47.10",
     "@supabase/ssr": "^0.5.2",
     "stripe": "^17.5.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
