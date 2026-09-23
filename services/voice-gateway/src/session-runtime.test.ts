@@ -3,7 +3,7 @@ import { CallSessionRuntime, type CallSessionRuntimeDeps } from "./session-runti
 import type { VoiceEvent, VoiceProvider } from "./providers/voice-provider.js";
 import { FakeClock } from "./lib/clock.js";
 import type { GatewayToClientEvent, VoiceSessionTokenClaims } from "@cold-call-gym/shared";
-import type { CallSessionRow } from "./lib/supabase.js";
+import type { CallSessionRecord } from "./lib/session-store.js";
 import type { FinalizeUsageResult } from "./lib/entitlement.js";
 
 class FakeProvider implements VoiceProvider {
@@ -31,21 +31,21 @@ class FakeProvider implements VoiceProvider {
   }
 }
 
-function makeSession(overrides: Partial<CallSessionRow> = {}): CallSessionRow {
+function makeSession(overrides: Partial<CallSessionRecord> = {}): CallSessionRecord {
   return {
     id: "session-1",
-    user_id: "user-1",
-    scenario_id: "scenario-1",
+    accessId: "access-1",
+    scenarioId: "scenario-1",
     state: "authorized",
-    usage_finalized_at: null,
-    created_at: new Date().toISOString(),
+    usageFinalizedAt: null,
+    createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
 
 function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSessionTokenClaims {
   return {
-    sub: "user-1",
+    sub: "access-1",
     sessionId: "session-1",
     scenarioId: "scenario-1",
     maxAllowedSeconds: 120,
@@ -73,7 +73,6 @@ function makeDeps(
         state: "completed",
         durationSeconds: params.durationSeconds,
         freeSecondsUsed: params.durationSeconds,
-        paidCreditsUsed: 0,
         alreadyFinalized: false,
       };
       return result;

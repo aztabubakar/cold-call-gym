@@ -4,7 +4,7 @@ import { SignJWT } from "jose";
 import { buildApp, type AppDeps } from "./app.js";
 import { MockVoiceProvider } from "./providers/mock-provider.js";
 import { systemClock } from "./lib/clock.js";
-import type { CallSessionRow } from "./lib/supabase.js";
+import type { CallSessionRecord } from "./lib/session-store.js";
 import type { GatewayToClientEvent } from "@cold-call-gym/shared";
 
 /**
@@ -12,26 +12,24 @@ import type { GatewayToClientEvent } from "@cold-call-gym/shared";
  * WebSocket connection (Node's built-in global WebSocket — the same API a
  * browser uses), real JWT signing/verification via `jose`, and the real
  * CallSessionRuntime state machine. The only thing NOT real here is the
- * database layer: a full Supabase project (Postgres + PostgREST + GoTrue)
- * needs Docker, which isn't available in this environment (no daemon). In
- * its place, an in-memory fake implements the same
- * getCallSession/transitionCallSessionState/markCallSessionFailed/
- * finalizeCallUsage contract that services/voice-gateway/src/lib/{supabase,
- * entitlement}.ts implement against real Supabase — this proves the
- * gateway's own wiring end-to-end (auth boundary, WebSocket protocol,
- * lifecycle, duplicate/reconnect rejection) even though it can't prove the
- * real Postgres round-trip. The real Postgres round-trip for
- * finalize_call_usage() itself (atomicity, idempotency, concurrency) was
- * separately verified in supabase/tests/phase2_entitlement.sql against a
- * live local Postgres 16 instance and is unchanged in Phase 3.
+ * session-store layer: a running web app (which owns the real
+ * CallSessionStore — see apps/web/src/lib/server/store) isn't available in
+ * this test environment. In its place, an in-memory fake implements the
+ * same getCallSession/transitionCallSessionState/markCallSessionFailed/
+ * finalizeCallUsage contract that services/voice-gateway/src/lib/
+ * {session-store,entitlement}.ts implement against the real web app over
+ * HTTP — this proves the gateway's own wiring end-to-end (auth boundary,
+ * WebSocket protocol, lifecycle, duplicate/reconnect rejection) even
+ * though it can't prove the real HTTP round-trip. The real store's
+ * finalizeUsage() algorithm (atomicity, idempotency, daily-cap clamping)
+ * is separately covered by apps/web/src/lib/server/store tests.
  */
 
 const SECRET = "e2e-test-signing-secret";
 
-function createFakeDb() {
-  const sessions = new Map<string, CallSessionRow & { duration_seconds?: number; free_seconds_used?: number; paid_credits_used?: number }>();
+function createFakeStore() {
+  const sessions = new Map<string, CallSessionRecord & { durationSeconds?: number; freeSecondsUsed?: number }>();
   let freeUsedToday = 0;
-  let paidBalance = 100;
 
   return {
     sessions,
@@ -50,56 +48,50 @@ function createFakeDb() {
       const row = sessions.get(params.sessionId);
       if (!row) throw new Error("session not found");
 
-      if (row.usage_finalized_at) {
+      if (row.usageFinalizedAt) {
         return {
           sessionId: row.id,
           state: row.state,
-          durationSeconds: row.duration_seconds ?? 0,
-          freeSecondsUsed: row.free_seconds_used ?? 0,
-          paidCreditsUsed: row.paid_credits_used ?? 0,
+          durationSeconds: row.durationSeconds ?? 0,
+          freeSecondsUsed: row.freeSecondsUsed ?? 0,
           alreadyFinalized: true,
         };
       }
 
       const freeUsed = Math.max(0, Math.min(600 - freeUsedToday, params.durationSeconds));
       freeUsedToday += freeUsed;
-      const paidSecondsNeeded = Math.max(0, params.durationSeconds - freeUsed);
-      const paidUsed = Math.min(paidBalance, Math.ceil(paidSecondsNeeded / 60));
-      paidBalance -= paidUsed;
 
       row.state = "completed";
-      row.usage_finalized_at = new Date().toISOString();
-      row.duration_seconds = params.durationSeconds;
-      row.free_seconds_used = freeUsed;
-      row.paid_credits_used = paidUsed;
+      row.usageFinalizedAt = new Date().toISOString();
+      row.durationSeconds = params.durationSeconds;
+      row.freeSecondsUsed = freeUsed;
 
       return {
         sessionId: row.id,
         state: "completed",
         durationSeconds: params.durationSeconds,
         freeSecondsUsed: freeUsed,
-        paidCreditsUsed: paidUsed,
         alreadyFinalized: false,
       };
     },
-    isDatabaseConfigured: () => true,
+    isSessionStoreConfigured: () => true,
   };
 }
 
 function addSession(
-  db: ReturnType<typeof createFakeDb>,
-  overrides: Partial<CallSessionRow> = {},
-): CallSessionRow {
-  const row: CallSessionRow = {
+  store: ReturnType<typeof createFakeStore>,
+  overrides: Partial<CallSessionRecord> = {},
+): CallSessionRecord {
+  const row: CallSessionRecord = {
     id: overrides.id ?? randomUUID(),
-    user_id: "user-1",
-    scenario_id: "scenario-1",
+    accessId: "access-1",
+    scenarioId: "scenario-1",
     state: "authorized",
-    usage_finalized_at: null,
-    created_at: new Date().toISOString(),
+    usageFinalizedAt: null,
+    createdAt: new Date().toISOString(),
     ...overrides,
   };
-  db.sessions.set(row.id, row);
+  store.sessions.set(row.id, row);
   return row;
 }
 
@@ -113,7 +105,7 @@ async function signToken(
     maxAllowedSeconds: claims.maxAllowedSeconds ?? 5,
   })
     .setProtectedHeader({ alg: "HS256" })
-    .setSubject(claims.sub ?? "user-1")
+    .setSubject(claims.sub ?? "access-1")
     .setIssuedAt(now)
     .setExpirationTime(now + 180)
     .setJti(randomUUID())
@@ -152,14 +144,14 @@ function waitOpen(ws: WebSocket): Promise<void> {
 }
 
 describe("voice gateway end-to-end (real server, real WebSocket)", () => {
-  let db: ReturnType<typeof createFakeDb>;
+  let db: ReturnType<typeof createFakeStore>;
   let app: ReturnType<typeof buildApp>;
   let httpBaseUrl: string;
   let wsBaseUrl: string;
 
   beforeEach(async () => {
     process.env.VOICE_GATEWAY_SIGNING_SECRET = SECRET;
-    db = createFakeDb();
+    db = createFakeStore();
 
     const deps: Partial<AppDeps> = {
       clock: systemClock,
@@ -174,7 +166,7 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
       transitionCallSessionState: (sessionId, state) => db.transitionCallSessionState(sessionId, state),
       markCallSessionFailed: (sessionId) => db.markCallSessionFailed(sessionId),
       finalizeCallUsage: (params) => db.finalizeCallUsage(params),
-      isDatabaseConfigured: () => db.isDatabaseConfigured(),
+      isSessionStoreConfigured: () => db.isSessionStoreConfigured(),
     };
     app = buildApp(deps);
     await app.listen({ port: 0, host: "127.0.0.1" });
@@ -198,7 +190,7 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
       service: "voice-gateway",
       provider: "mock",
       tokenVerification: "configured",
-      database: "configured",
+      sessionStore: "configured",
     });
     expect(JSON.stringify(body)).not.toContain(SECRET);
   });
@@ -227,7 +219,7 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
 
     const row = db.sessions.get(session.id)!;
     expect(row.state).toBe("completed");
-    expect(row.usage_finalized_at).not.toBeNull();
+    expect(row.usageFinalizedAt).not.toBeNull();
 
     // Sending `end` again on the same (now-closing) socket must not
     // double-finalize.
@@ -302,8 +294,8 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
     ws.close();
   });
 
-  it("rejects cross-user token/session mismatch (token minted for a different user)", async () => {
-    const session = addSession(db, { user_id: "the-real-owner" });
+  it("rejects cross-identity token/session mismatch (token minted for a different access identity)", async () => {
+    const session = addSession(db, { accessId: "the-real-owner" });
     const token = await signToken({ sessionId: session.id, sub: "an-attacker" });
 
     const ws = new WebSocket(`${wsBaseUrl}/ws?token=${token}`);

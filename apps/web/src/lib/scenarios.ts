@@ -1,11 +1,13 @@
 import type { Scenario } from "@cold-call-gym/shared";
-import { createClient } from "./supabase/server";
 
-// Used when Supabase isn't configured yet (e.g. first local run before
-// `supabase/seed.sql` has been applied) so scenario pages still render.
-export const FALLBACK_SCENARIOS: Scenario[] = [
+/**
+ * Scenario catalog. Cold Call Gym has no database — this static list is
+ * the entire catalog. `id` and `slug` are the same value: there's no
+ * separate database-generated id anymore, just a stable, readable slug.
+ */
+export const SCENARIOS: Scenario[] = [
   {
-    id: "fallback-busy-vp",
+    id: "busy-vp",
     slug: "busy-vp",
     name: "Busy VP of Sales",
     description: "Earn attention from an impatient executive.",
@@ -24,7 +26,7 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
     is_active: true,
   },
   {
-    id: "fallback-send-email",
+    id: "send-email",
     slug: "send-email",
     name: "Send me an email",
     description: "Recover from the classic brush-off.",
@@ -43,7 +45,7 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
     is_active: true,
   },
   {
-    id: "fallback-not-interested",
+    id: "not-interested",
     slug: "not-interested",
     name: "Not interested",
     description: "Handle early resistance naturally.",
@@ -62,7 +64,7 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
     is_active: true,
   },
   {
-    id: "fallback-competitor",
+    id: "competitor",
     slug: "competitor",
     name: "We already use a competitor",
     description: "Differentiate without attacking the incumbent.",
@@ -81,7 +83,7 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
     is_active: true,
   },
   {
-    id: "fallback-gatekeeper",
+    id: "gatekeeper",
     slug: "gatekeeper",
     name: "Gatekeeper",
     description: "Reach the right person professionally.",
@@ -100,7 +102,7 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
     is_active: true,
   },
   {
-    id: "fallback-price-objection",
+    id: "price-objection",
     slug: "price-objection",
     name: "Price objection",
     description: "Defend value without discounting on reflex.",
@@ -121,42 +123,9 @@ export const FALLBACK_SCENARIOS: Scenario[] = [
 ];
 
 export async function getScenarios(): Promise<Scenario[]> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return FALLBACK_SCENARIOS;
-  }
-
-  try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("scenarios")
-      .select("*")
-      .eq("is_active", true)
-      .order("target_duration_seconds", { ascending: true });
-
-    if (error || !data || data.length === 0) return FALLBACK_SCENARIOS;
-    return data as unknown as Scenario[];
-  } catch {
-    return FALLBACK_SCENARIOS;
-  }
+  return SCENARIOS;
 }
 
 export async function getScenarioBySlug(slug: string): Promise<Scenario | null> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return FALLBACK_SCENARIOS.find((s) => s.slug === slug) ?? null;
-  }
-
-  try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("scenarios")
-      .select("*")
-      .eq("slug", slug)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (error || !data) return FALLBACK_SCENARIOS.find((s) => s.slug === slug) ?? null;
-    return data as unknown as Scenario;
-  } catch {
-    return FALLBACK_SCENARIOS.find((s) => s.slug === slug) ?? null;
-  }
+  return SCENARIOS.find((s) => s.slug === slug) ?? null;
 }

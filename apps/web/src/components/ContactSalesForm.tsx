@@ -2,7 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 
-export default function ContactSalesForm() {
+type Props = {
+  defaultName?: string;
+  defaultEmail?: string;
+  defaultPhone?: string;
+};
+
+export default function ContactSalesForm({ defaultName = "", defaultEmail = "", defaultPhone = "" }: Props) {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,12 +75,19 @@ export default function ContactSalesForm() {
 
       <label className="field">
         <span>Name</span>
-        <input type="text" name="name" required maxLength={200} placeholder="Jordan Blake" />
+        <input type="text" name="name" required maxLength={200} placeholder="Jordan Blake" defaultValue={defaultName} />
       </label>
 
       <label className="field">
         <span>Work email</span>
-        <input type="email" name="workEmail" required maxLength={320} placeholder="jordan@company.com" />
+        <input
+          type="email"
+          name="workEmail"
+          required
+          maxLength={320}
+          placeholder="jordan@company.com"
+          defaultValue={defaultEmail}
+        />
       </label>
 
       <label className="field">
@@ -94,7 +107,7 @@ export default function ContactSalesForm() {
 
       <label className="field">
         <span>Phone (optional)</span>
-        <input type="tel" name="phone" maxLength={50} placeholder="+1 555 000 0000" />
+        <input type="tel" name="phone" maxLength={50} placeholder="+1 555 000 0000" defaultValue={defaultPhone} />
       </label>
 
       <label className="field">

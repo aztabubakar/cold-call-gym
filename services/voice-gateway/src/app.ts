@@ -9,9 +9,9 @@ import {
   getCallSession,
   transitionCallSessionState,
   markCallSessionFailed,
-  isDatabaseConfigured,
-  type CallSessionRow,
-} from "./lib/supabase.js";
+  isSessionStoreConfigured,
+  type CallSessionRecord,
+} from "./lib/session-store.js";
 import { finalizeCallUsage as realFinalizeCallUsage, type FinalizeUsageResult } from "./lib/entitlement.js";
 import { evaluateSessionEligibility } from "./lib/session-eligibility.js";
 import { CallSessionRuntime } from "./session-runtime.js";
@@ -22,7 +22,7 @@ export type AppDeps = {
   maxCallSecondsCeiling: number;
   quotaIntervalMs: number;
   createProvider: () => VoiceProvider;
-  getCallSession: (sessionId: string) => Promise<CallSessionRow | null>;
+  getCallSession: (sessionId: string) => Promise<CallSessionRecord | null>;
   transitionCallSessionState: (sessionId: string, state: string) => Promise<void>;
   markCallSessionFailed: (sessionId: string) => Promise<void>;
   finalizeCallUsage: (params: {
@@ -30,7 +30,7 @@ export type AppDeps = {
     durationSeconds: number;
     idempotencyKey: string;
   }) => Promise<FinalizeUsageResult>;
-  isDatabaseConfigured: () => boolean;
+  isSessionStoreConfigured: () => boolean;
 };
 
 function defaultDeps(): AppDeps {
@@ -44,17 +44,19 @@ function defaultDeps(): AppDeps {
     transitionCallSessionState,
     markCallSessionFailed,
     finalizeCallUsage: realFinalizeCallUsage,
-    isDatabaseConfigured,
+    isSessionStoreConfigured,
   };
 }
 
 /**
  * Builds the Fastify app. Production (src/index.ts) calls this with no
- * arguments and gets the real Supabase-backed implementation; tests can
- * inject fakes for getCallSession/transitionCallSessionState/
- * markCallSessionFailed/finalizeCallUsage to exercise the full real
- * WebSocket + token-verification + session-runtime pipeline without a live
- * Supabase project (see src/e2e.gateway.test.ts).
+ * arguments and gets the real implementation, which calls the web app's
+ * internal session API over HTTP (see lib/session-store.ts and
+ * lib/entitlement.ts); tests can inject fakes for getCallSession/
+ * transitionCallSessionState/markCallSessionFailed/finalizeCallUsage to
+ * exercise the full real WebSocket + token-verification +
+ * session-runtime pipeline without a running web app (see
+ * src/e2e.gateway.test.ts).
  */
 export function buildApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
   const deps: AppDeps = { ...defaultDeps(), ...overrides };
@@ -74,7 +76,7 @@ export function buildApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
     service: "voice-gateway",
     provider: process.env.VOICE_PROVIDER ?? "mock",
     tokenVerification: isTokenVerificationConfigured() ? "configured" : "not_configured",
-    database: deps.isDatabaseConfigured() ? "configured" : "not_configured",
+    sessionStore: deps.isSessionStoreConfigured() ? "configured" : "not_configured",
   }));
 
   // The `{ websocket: true }` route shorthand is only understood once
@@ -111,8 +113,8 @@ export function buildApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
         }
         const { claims } = verification;
 
-        if (!deps.isDatabaseConfigured()) {
-          closeWithError("internal_error", 1011, "Gateway database is not configured.");
+        if (!deps.isSessionStoreConfigured()) {
+          closeWithError("internal_error", 1011, "Gateway session store is not configured.");
           return;
         }
 

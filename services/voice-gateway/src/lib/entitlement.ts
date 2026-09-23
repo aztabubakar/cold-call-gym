@@ -1,54 +1,61 @@
-import { getSupabaseClient } from "./supabase.js";
-
 export type FinalizeUsageResult = {
   sessionId: string;
   state: string;
   durationSeconds: number;
   freeSecondsUsed: number;
-  /** LEGACY/DEPRECATED: always 0. Cold Call Gym has no paid credits. */
-  paidCreditsUsed: number;
   alreadyFinalized: boolean;
 };
 
+function baseUrl(): string | null {
+  const url = process.env.WEB_APP_URL;
+  return url ? url.replace(/\/$/, "") : null;
+}
+
+function apiKey(): string | null {
+  return process.env.INTERNAL_API_KEY ?? null;
+}
+
 /**
- * Gateway-side call into the SAME finalize_call_usage() Postgres RPC used
- * by the web app (see supabase/migrations/004_free_plan_entitlement.sql and
- * apps/web/src/lib/server/entitlement.ts). This is the trust boundary: the
- * gateway is the only thing that decides `durationSeconds` (from its own
- * monotonic timer — see src/session-runtime.ts), and it calls this RPC
- * directly with its own SUPABASE_SERVICE_ROLE_KEY, never by asking the
- * browser to submit a duration over HTTP. The RPC itself remains atomic
- * (per-session row lock + per-user advisory lock) and idempotent
- * (idempotency_key unique constraint), exactly as verified in the Phase 2
- * integration tests — this wrapper doesn't change that behavior, it's just
- * a second authorized caller. It never deducts credits (there are none);
- * it only ever records usage against the free daily allowance.
+ * Gateway-side call into the web app's internal finalize action (see
+ * apps/web/src/app/api/internal/sessions/[id]/route.ts and
+ * apps/web/src/lib/server/store/memory-store.ts's finalizeUsage()). This
+ * is the trust boundary: the gateway is the only thing that decides
+ * `durationSeconds` (from its own monotonic timer — see
+ * src/session-runtime.ts), and it calls this endpoint directly with its
+ * own INTERNAL_API_KEY, never by asking the browser to submit a duration
+ * over HTTP. The web app's store remains atomic (synchronous,
+ * single-process — see memory-store.ts's doc comment) and idempotent
+ * (idempotencyKey), exactly as the old Postgres RPC was; this wrapper
+ * doesn't change that behavior, it's just a second authorized caller. It
+ * never deducts credits (there are none); it only ever records usage
+ * against the free daily allowance.
  */
 export async function finalizeCallUsage(params: {
   sessionId: string;
   durationSeconds: number;
   idempotencyKey: string;
 }): Promise<FinalizeUsageResult> {
-  const supabase = getSupabaseClient();
+  const url = baseUrl();
+  const key = apiKey();
+  if (!url || !key) {
+    throw new Error("WEB_APP_URL / INTERNAL_API_KEY are not configured");
+  }
+
   const safeDuration = Math.max(0, Math.floor(params.durationSeconds));
 
-  const { data, error } = await supabase.rpc("finalize_call_usage", {
-    p_session_id: params.sessionId,
-    p_claimed_duration_seconds: safeDuration,
-    p_idempotency_key: params.idempotencyKey,
+  const res = await fetch(`${url}/api/internal/sessions/${params.sessionId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      action: "finalize",
+      durationSeconds: safeDuration,
+      idempotencyKey: params.idempotencyKey,
+    }),
   });
 
-  if (error) throw error;
-
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) throw new Error("finalize_call_usage returned no result");
-
-  return {
-    sessionId: row.session_id,
-    state: row.state,
-    durationSeconds: row.duration_seconds,
-    freeSecondsUsed: row.free_seconds_used,
-    paidCreditsUsed: row.paid_credits_used,
-    alreadyFinalized: row.already_finalized,
-  };
+  if (!res.ok) throw new Error(`finalizeCallUsage failed with status ${res.status}`);
+  return (await res.json()) as FinalizeUsageResult;
 }

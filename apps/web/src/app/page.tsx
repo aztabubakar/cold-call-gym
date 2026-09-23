@@ -29,14 +29,11 @@ export default function Home() {
         </h1>
         <p className="muted" style={{ fontSize: 20, maxWidth: 720 }}>
           Practice cold calls against realistic AI prospects, handle objections live, and get
-          evidence-based coaching after every rep.
+          evidence-based coaching after every rep. No account required.
         </p>
         <p className="hero-ctas">
-          <Link className="button" href="/signup">
-            Start free
-          </Link>
-          <Link className="button ghost" href="/scenarios">
-            Browse scenarios
+          <Link className="button" href="/start">
+            Start Practicing Free
           </Link>
         </p>
       </section>

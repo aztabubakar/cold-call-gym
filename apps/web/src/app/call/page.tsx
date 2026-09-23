@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import CallSession from "@/components/CallSession";
-import SupabaseSetupNotice from "@/components/SupabaseSetupNotice";
-import { createClient } from "@/lib/supabase/server";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getCurrentLead } from "@/lib/server/access";
 import { getEntitlement } from "@/lib/server/entitlement";
 import { getScenarioBySlug } from "@/lib/scenarios";
 
@@ -14,20 +12,12 @@ export default async function CallPage({
 }: {
   searchParams: Promise<{ scenario?: string }>;
 }) {
-  if (!isSupabaseConfigured()) {
-    return <SupabaseSetupNotice />;
-  }
-
   const { scenario: scenarioSlug } = await searchParams;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  const lead = await getCurrentLead();
+  if (!lead) {
     const redirectTarget = scenarioSlug ? `/call?scenario=${encodeURIComponent(scenarioSlug)}` : "/call";
-    redirect(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
+    redirect(`/start?redirect=${encodeURIComponent(redirectTarget)}`);
   }
 
   const scenario = scenarioSlug ? await getScenarioBySlug(scenarioSlug) : null;
@@ -36,7 +26,7 @@ export default async function CallPage({
   // race-safe gate happens server-side when the call is actually
   // authorized (POST /api/voice/session) and again, atomically, when
   // usage is finalized.
-  const entitlement = await getEntitlement(user.id);
+  const entitlement = await getEntitlement(lead.id);
 
   if (!entitlement.canStartCall) {
     return (

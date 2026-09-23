@@ -121,7 +121,10 @@ export type CallAuthorization = z.infer<typeof CallAuthorizationSchema>;
 export const VOICE_TOKEN_TTL_SECONDS = 180;
 
 export const VoiceSessionTokenClaimsSchema = z.object({
-  sub: z.string(), // user id
+  // Opaque access identifier (a lead's server-generated id — see
+  // apps/web/src/lib/server/access.ts). Cold Call Gym has no accounts, so
+  // this is never a Supabase/auth user id and never PII (name/email/phone).
+  sub: z.string(),
   sessionId: z.string(),
   scenarioId: z.string(),
   maxAllowedSeconds: z.number().int().positive(),

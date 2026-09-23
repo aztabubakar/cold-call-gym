@@ -1,30 +1,24 @@
 import Link from "next/link";
 
-export default function Nav({ email }: { email: string | null }) {
+export default function Nav({ hasAccess, firstName }: { hasAccess: boolean; firstName: string | null }) {
   return (
     <nav className="nav">
       <Link className="brand" href="/">
         Cold Call <span className="accent">Gym</span>
       </Link>
       <div className="nav-links">
-        {email ? (
+        {hasAccess ? (
           <>
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/scenarios">Scenarios</Link>
             <Link href="/contact-sales">Contact Sales</Link>
-            <span className="nav-email">{email}</span>
-            <form action="/auth/sign-out" method="post">
-              <button className="button ghost" type="submit">
-                Sign out
-              </button>
-            </form>
+            {firstName && <span className="nav-email">{firstName}</span>}
           </>
         ) : (
           <>
             <Link href="/contact-sales">Contact Sales</Link>
-            <Link href="/login">Sign in</Link>
-            <Link className="button" href="/signup">
-              Sign up
+            <Link className="button" href="/start">
+              Start Practicing Free
             </Link>
           </>
         )}

@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { ContactSalesInquirySchema } from "@/lib/contact-sales-schema";
 import { createSalesInquiry } from "@/lib/server/contact-sales";
+import { isRateLimited, clientIpFromHeaders } from "@/lib/server/rate-limit";
 
 /**
- * Accepts a "Contact Sales" inquiry. Public — does not require
- * authentication, since visitors evaluating the product may not have an
- * account yet. All input is validated and length-capped server-side
+ * Accepts a "Contact Sales" inquiry. Public — does not require an access
+ * session, since visitors evaluating the product may not have gone
+ * through /start. All input is validated and length-capped server-side
  * (ContactSalesInquirySchema); a filled-in honeypot field causes a silent
  * no-op success response rather than an error, so a bot doesn't learn its
- * submission was rejected. Never touches or exposes the service-role key to
- * the browser — the write happens entirely inside createSalesInquiry().
+ * submission was rejected. Never exposes lead data belonging to anyone
+ * other than the current visitor — see lib/server/contact-sales.ts.
  */
 export async function POST(request: Request) {
-  if (!isSupabaseConfigured()) {
-    return NextResponse.json({ error: "supabase_not_configured" }, { status: 503 });
+  if (isRateLimited(`contact-sales:${clientIpFromHeaders(request.headers)}`, { max: 10, windowMs: 60_000 })) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 
   const json = await request.json().catch(() => null);

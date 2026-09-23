@@ -1,23 +1,23 @@
 import { describe, it, expect } from "vitest";
 import { evaluateSessionEligibility } from "./session-eligibility.js";
-import type { CallSessionRow } from "./supabase.js";
+import type { CallSessionRecord } from "./session-store.js";
 import type { VoiceSessionTokenClaims } from "@cold-call-gym/shared";
 
-function makeSession(overrides: Partial<CallSessionRow> = {}): CallSessionRow {
+function makeSession(overrides: Partial<CallSessionRecord> = {}): CallSessionRecord {
   return {
     id: "session-1",
-    user_id: "user-1",
-    scenario_id: "scenario-1",
+    accessId: "access-1",
+    scenarioId: "scenario-1",
     state: "authorized",
-    usage_finalized_at: null,
-    created_at: new Date().toISOString(),
+    usageFinalizedAt: null,
+    createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
 
 function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSessionTokenClaims {
   return {
-    sub: "user-1",
+    sub: "access-1",
     sessionId: "session-1",
     scenarioId: "scenario-1",
     maxAllowedSeconds: 120,
@@ -33,19 +33,19 @@ describe("evaluateSessionEligibility", () => {
     expect(evaluateSessionEligibility(makeSession(), makeClaims())).toEqual({ ok: true });
   });
 
-  it("rejects when the token's user does not own the session (cross-user protection)", () => {
-    const result = evaluateSessionEligibility(makeSession({ user_id: "user-2" }), makeClaims());
+  it("rejects when the token's access identity does not own the session (cross-identity protection)", () => {
+    const result = evaluateSessionEligibility(makeSession({ accessId: "access-2" }), makeClaims());
     expect(result).toEqual({ ok: false, code: "forbidden" });
   });
 
   it("rejects when the token's scenario does not match the session's scenario", () => {
-    const result = evaluateSessionEligibility(makeSession({ scenario_id: "scenario-2" }), makeClaims());
+    const result = evaluateSessionEligibility(makeSession({ scenarioId: "scenario-2" }), makeClaims());
     expect(result).toEqual({ ok: false, code: "forbidden" });
   });
 
   it("rejects a completed session — a finalized session cannot restart", () => {
     const result = evaluateSessionEligibility(
-      makeSession({ state: "completed", usage_finalized_at: new Date().toISOString() }),
+      makeSession({ state: "completed", usageFinalizedAt: new Date().toISOString() }),
       makeClaims(),
     );
     expect(result).toEqual({ ok: false, code: "conflict" });

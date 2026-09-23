@@ -1,6 +1,6 @@
 import "server-only";
-import { createServiceRoleClient } from "../supabase/service";
-import { createClient } from "../supabase/server";
+import { salesInquiryStore } from "./store";
+import { getCurrentLead } from "./access";
 import type { ContactSalesInquiryInput } from "../contact-sales-schema";
 
 function emptyToNull(value: string | undefined): string | null {
@@ -10,37 +10,24 @@ function emptyToNull(value: string | undefined): string | null {
 }
 
 /**
- * Inserts a sales inquiry using the service-role client — the browser never
- * gets write (or read) access to sales_inquiries directly (see
- * supabase/migrations/005_sales_inquiries.sql for the RLS default-deny).
- * Attaches the current session's user id when the visitor happens to be
- * signed in, purely for context — submitting an inquiry never requires
- * authentication.
+ * Records a sales inquiry. Attaches the current access session's lead id
+ * when the visitor has one (purely for context — never exposed back to
+ * any other visitor), but submitting an inquiry never requires it: a
+ * visitor evaluating the product may not have gone through /start at all.
  */
 export async function createSalesInquiry(input: ContactSalesInquiryInput): Promise<void> {
-  let userId: string | null = null;
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    userId = user?.id ?? null;
-  } catch {
-    userId = null;
-  }
+  const lead = await getCurrentLead();
+  const leadId = lead?.id ?? null;
 
-  const service = createServiceRoleClient();
-  const { error } = await service.from("sales_inquiries").insert({
-    user_id: userId,
+  await salesInquiryStore.create({
+    leadId,
     name: input.name,
-    work_email: input.workEmail,
+    workEmail: input.workEmail,
     company: input.company,
-    job_title: emptyToNull(input.jobTitle),
-    team_size: emptyToNull(input.teamSize),
+    jobTitle: emptyToNull(input.jobTitle),
+    teamSize: emptyToNull(input.teamSize),
     phone: emptyToNull(input.phone),
-    expected_usage: emptyToNull(input.expectedUsage),
+    expectedUsage: emptyToNull(input.expectedUsage),
     message: emptyToNull(input.message),
   });
-
-  if (error) throw error;
 }

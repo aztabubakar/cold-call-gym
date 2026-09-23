@@ -5,7 +5,7 @@ import {
 } from "@cold-call-gym/shared";
 import type { VoiceEvent, VoiceProvider } from "./providers/voice-provider.js";
 import type { Clock } from "./lib/clock.js";
-import type { CallSessionRow } from "./lib/supabase.js";
+import type { CallSessionRecord } from "./lib/session-store.js";
 import type { FinalizeUsageResult } from "./lib/entitlement.js";
 
 export type Logger = {
@@ -61,7 +61,7 @@ export class CallSessionRuntime {
   private endPromise: Promise<void> | null = null;
 
   constructor(
-    private readonly session: CallSessionRow,
+    private readonly session: CallSessionRecord,
     private readonly claims: VoiceSessionTokenClaims,
     private readonly deps: CallSessionRuntimeDeps,
   ) {

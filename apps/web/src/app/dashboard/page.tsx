@@ -1,31 +1,22 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { formatDuration } from "@cold-call-gym/shared";
-import SupabaseSetupNotice from "@/components/SupabaseSetupNotice";
-import { createClient } from "@/lib/supabase/server";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getCurrentLead } from "@/lib/server/access";
 import { getDashboardData } from "@/lib/dashboard";
 
 export const metadata = { title: "Dashboard · Cold Call Gym" };
 
 export default async function DashboardPage() {
-  if (!isSupabaseConfigured()) {
-    return <SupabaseSetupNotice />;
+  const lead = await getCurrentLead();
+  if (!lead) {
+    redirect("/start?redirect=/dashboard");
   }
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login?redirect=/dashboard");
-  }
-
-  const data = await getDashboardData(user.id);
+  const data = await getDashboardData(lead.id);
   const percentRemaining = data.dailyLimitSeconds > 0
     ? Math.max(0, Math.min(100, Math.round((data.remainingTodaySeconds / data.dailyLimitSeconds) * 100)))
     : 0;
+  const firstName = lead.name.split(" ")[0];
 
   return (
     <>
@@ -34,7 +25,7 @@ export default async function DashboardPage() {
           <p className="accent">
             <b>DASHBOARD</b>
           </p>
-          <h1>Welcome back.</h1>
+          <h1>Welcome, {firstName}.</h1>
           <p className="muted">Keep your reps consistent. Every call sharpens the next one.</p>
         </div>
         <Link className="button" href="/scenarios">

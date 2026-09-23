@@ -14,19 +14,26 @@ function getSigningSecret(): Uint8Array {
 /**
  * Signs a short-lived (VOICE_TOKEN_TTL_SECONDS) JWT that authorizes the
  * browser to open exactly one voice-gateway WebSocket connection for one
- * call_sessions row. This token only proves "the web server just authorized
- * this call for this user" — it does NOT grant spending on its own. The
- * gateway still re-validates the session's live database state before
- * starting its timer, and the same atomic finalize_call_usage() RPC used
- * since Phase 2 remains the only path that ever records billable usage
- * against the free daily allowance (Cold Call Gym has no paid credits).
+ * call session. This token only proves "the web server just authorized
+ * this call for this access identity" — it does NOT grant spending on its
+ * own. The gateway still re-validates the session's live state (via the
+ * internal sessions API) before starting its timer, and
+ * CallSessionStore.finalizeUsage() remains the only path that ever
+ * records billable usage against the free daily allowance (Cold Call Gym
+ * has no paid credits).
  *
- * maxAllowedSeconds is a signed claim, not a value the browser can supply or
- * alter — tampering with it invalidates the signature (see
+ * The `sub` claim is the lead's opaque accessId (see
+ * lib/server/access.ts) — never their name, email, or phone. Cold Call
+ * Gym has no accounts, so there is no "user id" here in the authentication
+ * sense; this identifies which access session (and therefore which daily
+ * allowance) the call counts against.
+ *
+ * maxAllowedSeconds is a signed claim, not a value the browser can supply
+ * or alter — tampering with it invalidates the signature (see
  * services/voice-gateway/src/lib/token.ts for verification).
  */
 export async function signVoiceSessionToken(claims: {
-  userId: string;
+  accessId: string;
   sessionId: string;
   scenarioId: string;
   maxAllowedSeconds: number;
@@ -40,7 +47,7 @@ export async function signVoiceSessionToken(claims: {
     maxAllowedSeconds: claims.maxAllowedSeconds,
   } satisfies Omit<VoiceSessionTokenClaims, "sub" | "iat" | "exp" | "jti">)
     .setProtectedHeader({ alg: "HS256" })
-    .setSubject(claims.userId)
+    .setSubject(claims.accessId)
     .setIssuedAt(now)
     .setExpirationTime(exp)
     .setJti(randomUUID())
