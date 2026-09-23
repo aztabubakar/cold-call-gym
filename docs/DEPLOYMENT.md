@@ -1,5 +1,23 @@
 # Deployment
 
+## Database — Supabase (migrations & seed)
+
+Migrations and seed data deploy via two manually-triggered GitHub Actions
+workflows (`workflow_dispatch` only — neither runs on push):
+
+- `.github/workflows/supabase-deploy.yml` — `supabase link` then
+  `supabase db push` (applies `supabase/migrations/*.sql`), then verifies
+  the remote migration history matches the repo via `supabase migration
+  list` and fails the workflow on any mismatch. Never resets the database.
+- `.github/workflows/supabase-seed.yml` — runs only
+  `supabase/seed.sql` (an idempotent upsert of scenario rows, keyed by
+  unique `slug`) via `supabase db query --file`. Safe to re-run; never
+  touches `call_sessions`, `credit_ledger`, `profiles`, or `auth.users`.
+
+Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
+`SUPABASE_DB_PASSWORD`. Trigger deploy first, then seed, from the Actions
+tab; review the "Deploy migrations" step's output before re-running.
+
 ## Web — Vercel
 Set:
 - NEXT_PUBLIC_SUPABASE_URL

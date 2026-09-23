@@ -1,0 +1,73 @@
+name: Deploy Supabase Migrations
+
+# Manual only. This is the FIRST production deployment path — intentionally
+# not wired to push/main yet. Trigger it by hand from the Actions tab once
+# you've reviewed the migrations that will be applied.
+on:
+  workflow_dispatch: {}
+
+# Never let two deploys race against the same production database.
+concurrency:
+  group: supabase-deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Push migrations to hosted Supabase project
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Required as an env var by the Supabase CLI (not a flag) for both
+      # `supabase link` and any authenticated command that follows it.
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Fails the job immediately (nonzero exit) if the ref/password/token
+      # are wrong, before anything touches the schema.
+      - name: Link to the Supabase project
+        run: |
+          supabase link \
+            --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" \
+            --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+
+      # Applies supabase/migrations/*.sql in order. Does NOT touch seed
+      # data (no --include-seed) and never resets or drops anything —
+      # `db push` only ever applies migrations not yet recorded in the
+      # remote schema_migrations history. A failing migration exits
+      # nonzero and fails this step (and therefore the workflow).
+      - name: Deploy migrations
+        run: |
+          supabase db push \
+            --linked \
+            --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+
+      # Confirms the remote migration history now matches the repository
+      # exactly (every local migration has a matching remote entry) and
+      # fails the workflow if it doesn't, instead of just logging a list
+      # for someone to eyeball.
+      - name: Verify remote migration history matches the repository
+        run: |
+          supabase migration list \
+            --linked \
+            --password "${{ secrets.SUPABASE_DB_PASSWORD }}" \
+            --output-format json > migration-list.json
+
+          cat migration-list.json
+
+          mismatched=$(jq '[.migrations[] | select(.local != .remote)] | length' migration-list.json)
+          if [ "$mismatched" -ne 0 ]; then
+            echo "::error::Remote migration history does not match the repository. See migration-list.json above — any row where local and remote differ was not applied."
+            exit 1
+          fi
+
+          echo "Remote migration history matches the repository."

@@ -90,4 +90,23 @@ pnpm test
 pnpm build
 ```
 
+## Deploying to the hosted Supabase project
+
+Two manually-triggered GitHub Actions workflows (Actions tab → select
+workflow → "Run workflow" — neither runs automatically on push):
+
+- **`.github/workflows/supabase-deploy.yml`** — links to the hosted
+  project and runs `supabase db push` to apply any migrations in
+  `supabase/migrations/` not yet recorded remotely, then verifies the
+  remote migration history matches the repository (fails the workflow if
+  not). Never runs `supabase db reset` and never touches seed data.
+- **`.github/workflows/supabase-seed.yml`** — upserts
+  `supabase/seed.sql` (scenario rows only, keyed by unique `slug`) against
+  the hosted project. Safe to run repeatedly; never resets the database or
+  touches user/session/credit data.
+
+Both require these repository secrets (Settings → Secrets and variables →
+Actions): `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
+`SUPABASE_DB_PASSWORD`.
+
 Read `CLAUDE.md` and `docs/CLAUDE_CODE_PLAN.md` before building with Claude Code.
