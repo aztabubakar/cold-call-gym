@@ -1,9 +1,11 @@
 import {
   ClientToGatewayMessageSchema,
+  buildPersonaSystemInstruction,
+  getScenarioBySlug,
   type GatewayToClientEvent,
   type VoiceSessionTokenClaims,
 } from "@cold-call-gym/shared";
-import type { VoiceEvent, VoiceProvider } from "./providers/voice-provider.js";
+import type { VoiceEvent, VoiceProvider, VoiceProviderErrorCode } from "./providers/voice-provider.js";
 import type { Clock } from "./lib/clock.js";
 import type { CallSessionRecord } from "./lib/session-store.js";
 import type { FinalizeUsageResult } from "./lib/entitlement.js";
@@ -89,11 +91,15 @@ export class CallSessionRuntime {
     this.provider = this.deps.createProvider();
     this.provider.onEvent((event) => this.handleProviderEvent(event));
 
+    // The token's scenarioId is a scenario slug (see packages/shared's
+    // scenario catalog) — looked up directly here, no network call, so the
+    // persona/objections/difficulty reach the voice provider even if the
+    // web app is briefly unreachable mid-connect.
+    const scenario = getScenarioBySlug(this.claims.scenarioId);
+    const systemPrompt = buildPersonaSystemInstruction(scenario);
+
     try {
-      await this.provider.connect({
-        systemPrompt:
-          "You are a synthetic sales prospect in a cold-call training simulation. Behave realistically. Do not coach the caller during the call.",
-      });
+      await this.provider.connect({ systemPrompt });
     } catch (err) {
       await this.handlePreActiveFailure(String(err instanceof Error ? err.message : err));
     }
@@ -163,13 +169,30 @@ export class CallSessionRuntime {
         return;
       }
       case "audio": {
-        // Mock provider never emits this; kept for interface completeness
-        // ahead of Phase 4. Not forwarded to the browser yet.
+        // Native provider audio (Gemini's PCM16/24kHz response), relayed to
+        // the browser as-is — see docs/ARCHITECTURE.md's "Audio transport".
+        if (this.phase === "active") {
+          this.deps.send({ type: "audio", data: event.data });
+        }
+        return;
+      }
+      case "interrupted": {
+        // Barge-in: the caller started speaking over the prospect. The
+        // browser must stop/clear queued playback immediately.
+        if (this.phase === "active") {
+          this.deps.send({ type: "interrupted" });
+        }
+        return;
+      }
+      case "transcript": {
+        if (this.phase === "active") {
+          this.deps.send({ type: "transcript", role: event.role, text: event.text, final: event.final });
+        }
         return;
       }
       case "error": {
         if (this.phase === "connecting") {
-          void this.handlePreActiveFailure(event.message);
+          void this.handlePreActiveFailure(event.message, event.code);
         } else if (this.phase === "active") {
           void this.end("provider_error");
         }
@@ -237,12 +260,15 @@ export class CallSessionRuntime {
   }
 
   /** Provider never reached `active` — no billable time, mark failed, no RPC call. */
-  private async handlePreActiveFailure(message: string): Promise<void> {
+  private async handlePreActiveFailure(
+    message: string,
+    code: VoiceProviderErrorCode = "provider_unavailable",
+  ): Promise<void> {
     if (this.phase !== "connecting") return;
     this.phase = "failed";
     this.clearTimers();
 
-    this.deps.log.warn({ sessionId: this.sessionId, reason: message }, "session failed before active");
+    this.deps.log.warn({ sessionId: this.sessionId, reason: message, code }, "session failed before active");
 
     try {
       await this.deps.markCallSessionFailed(this.sessionId);
@@ -250,9 +276,11 @@ export class CallSessionRuntime {
       this.deps.log.error({ sessionId: this.sessionId, err: String(err) }, "failed to mark session failed");
     }
 
-    this.deps.send({ type: "error", code: "provider_unavailable", message: "Could not connect to the voice provider." });
+    // A friendly, generic message — never the provider's raw error text,
+    // which could describe internal implementation details.
+    this.deps.send({ type: "error", code, message: "We couldn't start the AI prospect. Please try again." });
     this.deps.send({ type: "closed" });
-    this.deps.closeSocket(1011, "provider_unavailable");
+    this.deps.closeSocket(1011, code);
   }
 
   /**

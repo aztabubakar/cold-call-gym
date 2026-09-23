@@ -3,6 +3,10 @@ import {
   formatDuration,
   DAILY_FREE_SECONDS,
   MAX_CALL_SECONDS,
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_INPUT_SAMPLE_RATE_HZ,
+  GEMINI_OUTPUT_SAMPLE_RATE_HZ,
+  MAX_AUDIO_CHUNK_BASE64_CHARS,
   computeMaxAllowedSeconds,
   ScenarioSchema,
   FreeEntitlementSchema,
@@ -208,6 +212,20 @@ describe("ClientToGatewayMessageSchema", () => {
     expect(parsed).toEqual({ type: "end" });
     expect("durationSeconds" in parsed).toBe(false);
   });
+
+  it("rejects an empty audio chunk", () => {
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "audio", data: "" }).success).toBe(false);
+  });
+
+  it("rejects an oversized audio chunk (bounded well above one realistic real-time chunk)", () => {
+    const oversized = "a".repeat(MAX_AUDIO_CHUNK_BASE64_CHARS + 1);
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "audio", data: oversized }).success).toBe(false);
+  });
+
+  it("accepts an audio chunk right at the bound", () => {
+    const atBound = "a".repeat(MAX_AUDIO_CHUNK_BASE64_CHARS);
+    expect(ClientToGatewayMessageSchema.safeParse({ type: "audio", data: atBound }).success).toBe(true);
+  });
 });
 
 describe("GatewayToClientEventSchema", () => {
@@ -224,5 +242,45 @@ describe("GatewayToClientEventSchema", () => {
   it("rejects a negative remainingSeconds on a quota event", () => {
     const result = GatewayToClientEventSchema.safeParse({ type: "quota", remainingSeconds: -1 });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts native provider audio output", () => {
+    expect(GatewayToClientEventSchema.safeParse({ type: "audio", data: "YWJjZA==" }).success).toBe(true);
+  });
+
+  it("accepts an interruption (barge-in) event with no extra fields", () => {
+    expect(GatewayToClientEventSchema.safeParse({ type: "interrupted" }).success).toBe(true);
+  });
+
+  it("accepts user and prospect transcript events", () => {
+    expect(
+      GatewayToClientEventSchema.safeParse({ type: "transcript", role: "user", text: "hi", final: true })
+        .success,
+    ).toBe(true);
+    expect(
+      GatewayToClientEventSchema.safeParse({ type: "transcript", role: "prospect", text: "hi", final: false })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects a transcript role other than user/prospect", () => {
+    const result = GatewayToClientEventSchema.safeParse({
+      type: "transcript",
+      role: "assistant",
+      text: "hi",
+      final: true,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("Gemini configuration constants", () => {
+  it("defaults to gemini-3.8-live", () => {
+    expect(DEFAULT_GEMINI_MODEL).toBe("gemini-3.8-live");
+  });
+
+  it("uses Gemini Live's fixed native audio sample rates", () => {
+    expect(GEMINI_INPUT_SAMPLE_RATE_HZ).toBe(16000);
+    expect(GEMINI_OUTPUT_SAMPLE_RATE_HZ).toBe(24000);
   });
 });

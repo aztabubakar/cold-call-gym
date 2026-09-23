@@ -58,9 +58,19 @@ Set:
   `docs/ARCHITECTURE.md`)
 - `INTERNAL_API_KEY` — must match the web app's value exactly
 - `VOICE_GATEWAY_SIGNING_SECRET`
-- `VOICE_PROVIDER`
-- `GEMINI_API_KEY`
-- `GEMINI_LIVE_MODEL`
+- `VOICE_PROVIDER` — `gemini` for real voice, `mock` to run without a Gemini credential
+- `GEMINI_API_KEY` — **required when `VOICE_PROVIDER=gemini`**; the gateway refuses to start
+  without it in that case (`services/voice-gateway/src/lib/config.ts`). Read only by this
+  process — never put this in Vercel/the web app's environment (see below).
+- `GEMINI_MODEL` — default `gemini-3.8-live` if unset
+- `MAX_CALL_SECONDS` — default 1800 if unset; the gateway's own absolute safety ceiling,
+  independent of a user's remaining daily allowance (see `docs/MONETIZATION.md`)
+
+**`GEMINI_API_KEY` belongs only on whatever process actually runs the voice gateway.** Do not add
+it to the Vercel project's environment variables unless the voice gateway is itself deployed as a
+Vercel function (it isn't, in the deployment shape documented here — the gateway is a
+long-running WebSocket process, which Vercel's serverless functions don't support well; use
+Render/Cloud Run/Fly/etc. as above).
 
 Health endpoint: `/health`
 WebSocket endpoint: `/ws?token=<signed voice-session token>`
@@ -93,6 +103,9 @@ cannot, without a network call) confirm the web app is actually reachable.
   `GEMINI_API_KEY` — none should ever appear in a `NEXT_PUBLIC_` variable or a browser-visible
   response)
 - document Gemini quota/rate limits
+- the web app must be served over HTTPS in production — `getUserMedia` (microphone access) is
+  only available in a secure context (HTTPS or `localhost`); Vercel serves HTTPS by default, so
+  this is only a concern for a custom deployment
 - if running more than one voice-gateway instance, replace the in-memory
   `activeSessionIds` duplicate-connection guard
   (`services/voice-gateway/src/app.ts`) with a shared store (e.g. Redis) —

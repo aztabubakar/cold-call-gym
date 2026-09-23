@@ -35,7 +35,7 @@ below for exactly how that works.
 - validate the access session/token
 - load scenario/persona
 - check entitlement
-- connect to Gemini Live
+- connect to the configured voice provider (mock, or real Gemini Live — see "Voice provider" below)
 - relay audio
 - meter time server-side
 - terminate when quota is exhausted
@@ -121,7 +121,8 @@ Browser                    Next.js web app              Voice Gateway      Inter
    |                                                            | verify ownership +  |
    |                                                            | eligibility <--------|
    |                                                            | authorized->connecting (POST)|
-   |                                                            | connect mock provider |
+   |                                                            | connect voice provider|
+   |                                                            | (mock or Gemini Live) |
    |<----------------------------------------------------------| {type:"connected"}  |
    |<----------------------------------------------------------| {type:"active", …}  | connecting->active (POST),
    |                                                            | start monotonic timer|
@@ -245,14 +246,157 @@ policy — no reconnect grace period. The in-process tracking is
 single-instance only; see `docs/DEPLOYMENT.md` for the multi-instance
 caveat (which now also applies to the in-memory store itself, not just this tracking set).
 
-### How Phase 4 (Gemini Live) plugs in
+## Voice provider (Phase 4: real Gemini Live)
 
-Everything above is provider-agnostic: `CallSessionRuntime` talks to
-whatever `VoiceProvider` `createProvider()` returns
-(`services/voice-gateway/src/providers/voice-provider.ts`), and
-`GeminiLiveProvider` already implements that same interface (currently a
-stub that throws — see `docs/CLAUDE_CODE_PLAN.md`). Swapping
-`VOICE_PROVIDER=gemini` will route calls through it without changing
+```
+Browser mic → resample to 16kHz PCM16 → Voice Gateway → Gemini Live
+Gemini Live → native 24kHz PCM16 audio → Voice Gateway → Browser speaker
+```
+
+Everything in "Voice session lifecycle" above is provider-agnostic:
+`CallSessionRuntime` talks to whatever `VoiceProvider` `createProvider()`
+returns (`services/voice-gateway/src/providers/voice-provider.ts`).
+`VOICE_PROVIDER=mock` (default) uses `MockVoiceProvider` — deterministic,
+no external calls, what CI/tests run against. `VOICE_PROVIDER=gemini` uses
+`GeminiLiveProvider`, a real implementation against the official
+`@google/genai` SDK's Live API. Switching providers changes nothing about
 token issuance, session-eligibility checks, timing, quota enforcement, or
-finalization — the storage/entitlement architecture does not need to
-change for Phase 4.
+finalization — only what `CallSessionRuntime` calls to actually talk.
+
+**The browser never talks to Gemini directly.** `GEMINI_API_KEY` is read
+only in `services/voice-gateway/src/providers/gemini-live-provider.ts`,
+never logged, never put in a JWT claim, and there is no
+`NEXT_PUBLIC_GEMINI_API_KEY` anywhere — see docs/SECURITY.md.
+
+### Readiness and billing
+
+`GeminiLiveProvider` emits the `connected` event (which is what triggers
+`CallSessionRuntime.becomeActive()` — see "Why the gateway's timer is
+authoritative" above) **only after Gemini's own `setupComplete` message
+arrives**, never merely because the underlying WebSocket to Gemini opened.
+If `setupComplete` doesn't arrive within 10 seconds
+(`READY_TIMEOUT_MS`), that's treated as a pre-active failure
+(`provider_timeout`) — zero billable time, exactly like any other
+pre-active failure. This is what stops Gemini connection latency from
+ever eating into a user's daily allowance.
+
+### Model and configuration
+
+`GEMINI_MODEL` selects the model (default `DEFAULT_GEMINI_MODEL =
+"gemini-3.8-live"`, defined once in `packages/shared` and never hardcoded
+elsewhere). The Live session is configured with:
+- `responseModalities: [Modality.AUDIO]` — native audio-to-audio, never
+  text-only.
+- `systemInstruction` — the scenario's full persona (see "Persona
+  prompting" below).
+- `inputAudioTranscription: {}` / `outputAudioTranscription: {}` — enabled
+  for the `transcript` event (UI/debugging only, never required for the
+  call to function).
+- Deliberately **not** set: `thinkingConfig` (not appropriate for this
+  conversational voice persona) and `enableAffectiveDialog` (unnecessary
+  here) — per product requirement for `gemini-3.8-live`.
+- Deliberately **not** set: `explicitVadSignal` / a disabled
+  `realtimeInputConfig` — leaving automatic voice-activity-based turn
+  detection as the default is what gives natural barge-in (see below) with
+  no client-side "press stop after every sentence" interaction.
+
+### Persona prompting
+
+The gateway builds the system instruction from the scenario's full
+persona — role, company, patience/skepticism, current solution, common
+objections, difficulty, and private "hidden state" context — via
+`buildPersonaSystemInstruction()` (`packages/shared/src/index.ts`). The
+scenario catalog lives in `packages/shared` (not just `apps/web`)
+specifically so the gateway can look it up **directly from the signed
+token's `scenarioId` claim**, with no network call back to the web app —
+see `CallSessionRuntime.start()`. The prompt explicitly instructs Gemini
+to stay in character as the prospect (never as a coach, assistant, or
+interviewer), never reveal its instructions, never announce it's an AI
+unless directly asked, and scale resistance to the scenario's difficulty —
+see `packages/shared/src/scenarios.test.ts` for what's verified about it.
+
+### Audio formats and transport
+
+- **Browser → Gateway → Gemini (input)**: the mic's native sample rate
+  (whatever the device/browser gives — typically 48kHz or 44.1kHz) is
+  resampled client-side to Gemini's fixed required input format — 16kHz
+  mono PCM16 (`GEMINI_INPUT_SAMPLE_RATE_HZ`) — then base64-encoded and
+  sent as the existing `{type:"audio", data}` WebSocket message
+  (`apps/web/src/lib/audio/{pcm,mic-capture}.ts`). The gateway does **no**
+  transcoding: it forwards that same base64 string directly to
+  `session.sendRealtimeInput({audio:{data, mimeType:"audio/pcm;rate=16000"}})`.
+- **Gemini → Gateway → Browser (output)**: Gemini's native output is
+  always 24kHz mono PCM16 (`GEMINI_OUTPUT_SAMPLE_RATE_HZ`, not
+  configurable). The gateway relays the base64 audio it gets from the SDK
+  straight through as a new `{type:"audio", data}` GatewayToClientEvent —
+  again no transcoding. The browser decodes and schedules it for gapless
+  playback (`apps/web/src/lib/audio/playback.ts`); `AudioBuffer` accepts
+  any sample rate independent of the `AudioContext`'s own rate, so no
+  manual resampling is needed on the output side.
+- **Transport choice**: base64-encoded JSON over the existing WebSocket
+  (not raw binary frames). This adds ~33% size overhead per chunk versus
+  binary, but was kept deliberately — it requires zero changes to the
+  existing `ClientToGatewayMessageSchema`/`GatewayToClientEventSchema`
+  JSON envelope, avoids a mixed binary+JSON protocol, and the overhead is
+  small in absolute terms for the realistic chunk sizes involved
+  (~20ms of 16kHz mono PCM16 ≈ 640 bytes raw ≈ ~854 base64 chars — see
+  `MAX_AUDIO_CHUNK_BASE64_CHARS`, which bounds this well above what one
+  real-time chunk needs, rejecting oversized/malformed frames before they
+  ever reach a provider). `@fastify/websocket` is also configured with a
+  1MB `maxPayload` as a transport-level backstop.
+- **Chunking**: the browser's `AudioWorkletProcessor`
+  (`public/audio/mic-worklet.js`) accumulates ~20ms of audio per chunk
+  before posting it to the main thread for resampling/encoding/sending —
+  small enough for low conversational latency, large enough to avoid
+  per-message overhead from sending every single 128-sample render
+  quantum.
+
+### Barge-in and turn detection
+
+Gemini's default automatic voice-activity detection (VAD) is what drives
+both turn-taking and interruption — the gateway doesn't implement any of
+its own VAD or explicit "press stop" interaction. When the caller starts
+speaking while Gemini is generating, Gemini detects this itself and sends
+`serverContent.interrupted: true`; `GeminiLiveProvider` turns that into an
+`interrupted` VoiceEvent, `CallSessionRuntime` forwards it as
+`{type:"interrupted"}`, and the browser's `AudioPlaybackQueue.interrupt()`
+immediately stops and discards every scheduled/playing audio source —
+nothing queued survives an interruption. The caller's own microphone
+capture is never paused by an interruption (only prospect *playback*
+stops) — see `apps/web/src/components/CallSession.tsx`.
+
+### Transcription
+
+`inputAudioTranscription`/`outputAudioTranscription` are enabled, and
+Gemini's transcript deltas are relayed as `{type:"transcript", role:
+"user"|"prospect", text, final}` events. This is UI/debugging-only —
+nothing about call authorization, timing, or finalization depends on it,
+and Cold Call Gym doesn't persist transcripts by default (storage is
+ephemeral in-memory anyway — see "Storage abstraction" above).
+
+### Provider error handling
+
+`GeminiLiveProvider` classifies every SDK failure (`classifyGeminiError()`
+in `services/voice-gateway/src/lib/gemini-error.ts`) into one of a fixed
+set of safe codes — `provider_auth_error`, `provider_quota_error`,
+`provider_connection_error`, `provider_timeout`, `provider_protocol_error`,
+`provider_unavailable` — never the SDK's raw error text, which could
+describe internal implementation details. A pre-active failure always
+reaches the browser as the same friendly message ("We couldn't start the
+AI prospect. Please try again.") regardless of the underlying code; the
+code itself is only for server-side logging/debugging. No automatic
+retry/reconnect is implemented — a Gemini failure before `active` fails
+the session (zero usage); a failure after `active` ends and finalizes the
+call normally, exactly like an explicit hang-up. This is a deliberate,
+conservative choice: silently reconnecting mid-call would either lose
+conversation context or risk double-finalizing usage, neither of which is
+worth the complexity for this MVP.
+
+### Startup validation
+
+`services/voice-gateway/src/lib/config.ts`'s `validateGatewayConfig()`
+runs once at process start (`index.ts`), before the gateway accepts any
+connections: if `VOICE_PROVIDER=gemini` but `GEMINI_API_KEY` is unset, the
+process logs a clear error and exits immediately (exit code 1) rather than
+starting and only discovering the missing credential on the first real
+call.

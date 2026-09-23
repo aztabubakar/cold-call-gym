@@ -41,7 +41,15 @@ specifically) without changing the voice-gateway trust boundary, the entitlement
 
 ## Secrets
 Server only:
-- Gemini API key
+- `GEMINI_API_KEY` — read only in `services/voice-gateway/src/providers/gemini-live-provider.ts`,
+  a separate Node process from the browser. Never logged (verified:
+  `services/voice-gateway/src/lib/gemini-error.ts`'s classifier only ever returns one of a fixed
+  set of safe codes/messages, never the SDK's raw error text, which could otherwise echo request
+  details), never put in the voice-session JWT, and there is no `NEXT_PUBLIC_GEMINI_API_KEY` —
+  the browser never talks to Gemini directly at all, only to the Voice Gateway. The gateway
+  refuses to start with `VOICE_PROVIDER=gemini` and no `GEMINI_API_KEY`
+  (`services/voice-gateway/src/lib/config.ts`), rather than accepting connections and failing
+  per-call.
 - Voice gateway signing secret (`VOICE_GATEWAY_SIGNING_SECRET`)
 - `INTERNAL_API_KEY` — the shared secret the voice gateway uses to call the web app's internal
   session API (`apps/web/src/app/api/internal/sessions/[id]/route.ts`). This replaces the old
@@ -66,10 +74,33 @@ database — see `docs/ARCHITECTURE.md`'s "Storage abstraction").
   gateway process never even receives.
 
 ## Audio
-Default: do not persist raw audio.
+Default: do not persist raw audio. The gateway relays audio bytes between the browser and Gemini
+in both directions without writing them anywhere — no buffering to disk, no logging of audio
+payloads. Microphone permission is requested only when the user clicks "Start call"
+(`apps/web/src/lib/audio/mic-capture.ts`), never on page load, and the browser stops all
+microphone tracks (`MediaStreamTrack.stop()`) as soon as the call ends, errors, or the page is
+backgrounded/hidden (see `apps/web/src/components/CallSession.tsx`'s `visibilitychange`/`pagehide`
+handling) — never left open in the background.
 
 ## Transcripts
-Make storage configurable and provide deletion controls.
+`inputAudioTranscription`/`outputAudioTranscription` are enabled for UI/debugging (see
+`docs/ARCHITECTURE.md`'s "Transcription" section) but not persisted anywhere by default —
+consistent with the rest of this MVP's ephemeral, in-memory-only storage. Transcript text is
+relayed over the same WebSocket as everything else, to the browser only, never to any third-party
+or logging service.
+
+## Voice input validation
+- Every client-to-gateway audio message is validated against
+  `ClientToGatewayMessageSchema` (`packages/shared`) before anything touches a provider — a
+  malformed or missing `data` field is rejected outright.
+- Audio chunks are bounded to `MAX_AUDIO_CHUNK_BASE64_CHARS` (100,000 base64 chars, ≈75KB
+  decoded) — generously above what one realistic ~20ms real-time chunk needs, but enough to
+  reject an oversized/hostile payload before it's ever forwarded to Gemini. The WebSocket
+  transport itself is additionally bounded to a 1MB `maxPayload`
+  (`services/voice-gateway/src/app.ts`) as defense in depth.
+- The gateway only ever forwards audio to the provider while the call is genuinely `active`
+  (`CallSessionRuntime.handleClientMessage`) — audio sent before authorization or after the call
+  has ended/quota-expired is silently dropped, never buffered or forwarded late.
 
 ## Abuse controls
 - an access session is required to reach `/dashboard`, `/scenarios`, `/call` (see "No accounts"
@@ -190,3 +221,11 @@ section describes how the single free daily allowance is protected.
   visitor from repeating `/start` with different plausible contact info to get more free minutes
   than intended; this product deliberately trades that off against zero-friction access. See "No
   accounts" above.
+- **No automatic Gemini reconnect/retry.** A Gemini failure mid-call ends the call rather than
+  attempting to resume — see `docs/ARCHITECTURE.md`'s "Provider error handling". This is a
+  deliberate conservative choice, not an oversight: silently reconnecting could lose conversation
+  context or risk double-finalizing usage.
+- **Gemini error classification is a best-effort heuristic**, not a guaranteed-exhaustive mapping
+  (`services/voice-gateway/src/lib/gemini-error.ts` pattern-matches the SDK's error text/close
+  codes). An unrecognized failure safely falls back to the generic `provider_unavailable` code —
+  it never risks leaking raw error content by trying harder to classify it correctly.

@@ -88,7 +88,11 @@ export function buildApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
   // (request, reply) instead of (socket, request), which is a nasty
   // footgun to debug (confirmed empirically while building this).
   app.register(async (instance) => {
-    await instance.register(websocket);
+    // Bounds the raw WebSocket frame size at the transport level, defense
+    // in depth on top of ClientToGatewayMessageSchema's own per-field
+    // length caps (e.g. MAX_AUDIO_CHUNK_BASE64_CHARS) — a malformed/hostile
+    // client can't force an oversized payload through to JSON.parse at all.
+    await instance.register(websocket, { options: { maxPayload: 1_048_576 } });
 
     instance.get("/ws", { websocket: true }, (socket, request) => {
       const url = new URL(request.url, "http://localhost");

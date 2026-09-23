@@ -66,12 +66,27 @@ behavior.
   shared-schema tests; see the Phase 3 development report for exactly what
   was and wasn't run against a live Supabase project
 
-## Phase 4 — Gemini Live
-- implement current official Gemini Live transport
-- real-time two-way audio
-- interruption/barge-in
-- graceful provider failure
-- no API key in browser
+## Phase 4 — Gemini Live ✅ complete
+- real `GeminiLiveProvider` against the official `@google/genai` SDK's Live API
+  (`services/voice-gateway/src/providers/gemini-live-provider.ts`), selected via
+  `VOICE_PROVIDER=gemini`; `VOICE_PROVIDER=mock` (default) keeps the deterministic mock provider
+  for CI/local dev
+- real-time two-way native audio: browser mic (resampled to 16kHz PCM16) → gateway → Gemini Live →
+  24kHz PCM16 response → gateway → browser speaker, via a real `AudioWorkletNode` capture pipeline
+  and Web Audio API scheduled playback (`apps/web/src/lib/audio/{pcm,mic-capture,playback}.ts`)
+- interruption/barge-in via Gemini's own automatic voice-activity detection — no client-side
+  "press stop" interaction; the browser clears queued playback immediately on `interrupted`
+- persona-driven system instructions built per scenario (`buildPersonaSystemInstruction()`,
+  `packages/shared/src/index.ts`) — Gemini plays the prospect, never a coach/assistant
+- graceful provider failure: readiness (billing-timer start) gated on Gemini's `setupComplete`,
+  never merely a WebSocket open; failures classified into a safe code taxonomy
+  (`services/voice-gateway/src/lib/gemini-error.ts`) and never leak raw provider errors or the API
+  key to the browser
+- `GEMINI_API_KEY` read only on the gateway process; gateway refuses to start with
+  `VOICE_PROVIDER=gemini` and no key configured (`services/voice-gateway/src/lib/config.ts`)
+- input/output transcription enabled for UI/debugging, not required for the call to function
+- see `docs/ARCHITECTURE.md`'s "Voice provider (Phase 4: real Gemini Live)" section for the full
+  pipeline and `docs/SECURITY.md` for the trust-boundary details
 
 ## Phase 5 — Coaching
 - transcript/events

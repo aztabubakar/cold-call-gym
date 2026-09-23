@@ -34,19 +34,25 @@ the access session does and does not prove.
   does not verify identity. See `docs/SECURITY.md` for exactly what this does and doesn't
   guarantee.
 - **The voice gateway is still the real, authoritative call pipeline** (this part is unchanged
-  from the earlier Supabase-backed architecture): `POST /api/voice/session` signs a short-lived
+  in spirit from the earlier architecture): `POST /api/voice/session` signs a short-lived
   JWT (`VOICE_GATEWAY_SIGNING_SECRET`) the browser presents to open a WebSocket at
   `services/voice-gateway`; the gateway verifies the token, re-validates the session's live state
-  (now via the web app's internal session API instead of a shared database — see
-  `docs/ARCHITECTURE.md`), meters active call time with its own monotonic clock, enforces
-  `maxAllowedSeconds` (capped by the gateway's own `MAX_CALL_SECONDS`), and finalizes usage
-  itself — the browser can never submit a duration for billing anywhere.
+  (via the web app's internal session API — see `docs/ARCHITECTURE.md`), meters active call time
+  with its own monotonic clock, enforces `maxAllowedSeconds` (capped by the gateway's own
+  `MAX_CALL_SECONDS`), and finalizes usage itself — the browser can never submit a duration for
+  billing anywhere.
+- **Real Gemini Live voice (Phase 4).** Browser microphone → Voice Gateway → Gemini Live → native
+  audio response → Voice Gateway → browser speaker. The browser never talks to Gemini directly,
+  and `GEMINI_API_KEY` lives only on the gateway process. `VOICE_PROVIDER=mock` (default) keeps
+  the deterministic mock provider for local dev/CI without any Gemini credential;
+  `VOICE_PROVIDER=gemini` switches to real audio. See `docs/ARCHITECTURE.md`'s "Voice provider"
+  section for the full pipeline, formats, and barge-in/turn-detection behavior.
 - **No payments.** Every access identity gets a single free 600-second/UTC-day allowance;
   expanded access goes through Contact Sales (`POST /api/contact-sales`). See
   `docs/MONETIZATION.md`.
 
-Not yet implemented (later phases — see `docs/CLAUDE_CODE_PLAN.md`): real Gemini Live transport,
-the full coaching evaluator, a durable production datastore. There is no payments phase.
+Not yet implemented: the full coaching evaluator, a durable production datastore.
+There is no payments phase.
 
 ## Architecture
 - `apps/web`: Next.js + TypeScript — owns the lead/call-session storage abstraction
@@ -65,12 +71,13 @@ There is no database and no payments provider to deploy. Read
 not durable and must be replaced before real usage depends on it.
 
 ## Important
-The starter uses a mock voice provider by default. The Gemini Live provider is deliberately
-isolated behind an interface and should be implemented against the current official Gemini Live
-API in Phase 4.
+`VOICE_PROVIDER=mock` (default) keeps the deterministic mock provider for local dev/CI — no
+Gemini credential needed. `VOICE_PROVIDER=gemini` uses the real `@google/genai` Live API
+implementation (`services/voice-gateway/src/providers/gemini-live-provider.ts`); the gateway
+refuses to start with `VOICE_PROVIDER=gemini` and no `GEMINI_API_KEY` configured, rather than
+failing silently on the first call.
 
-Suggested env-configurable model:
-`GEMINI_LIVE_MODEL=gemini-3.8-live`
+Model is configurable via `GEMINI_MODEL` (default `gemini-3.8-live`) — never hardcoded elsewhere.
 
 ## Start
 ```bash
@@ -87,7 +94,9 @@ no external dependencies to configure to run locally.
 Fill in `services/voice-gateway/.env` too (copied from `.env.example`): `WEB_APP_URL` (the web
 app's base URL, e.g. `http://localhost:3000` locally) and `INTERNAL_API_KEY` (must match the web
 app's value exactly), plus `VOICE_GATEWAY_SIGNING_SECRET` (must also match the web app's value —
-it's how the gateway verifies a call-session token actually came from your web server).
+it's how the gateway verifies a call-session token actually came from your web server). Leave
+`VOICE_PROVIDER=mock` for local dev without a Gemini key; set `VOICE_PROVIDER=gemini` and
+`GEMINI_API_KEY` to use real voice.
 
 ```bash
 pnpm dev:web

@@ -14,8 +14,9 @@ individuals who need more than the free daily allowance use the Contact Sales fo
 - No accounts, no passwords, no Supabase. Access is gated by an opaque, server-generated session
   cookie tied to a lead record — this is access gating, not authentication. Never describe it as
   secure identity verification. See `docs/SECURITY.md`.
-- Never expose Gemini secrets or the internal-API shared secret (`INTERNAL_API_KEY`) to the
-  browser.
+- Never expose Gemini secrets (`GEMINI_API_KEY`) or the internal-API shared secret
+  (`INTERNAL_API_KEY`) to the browser — no `NEXT_PUBLIC_GEMINI_API_KEY`, ever. The browser talks
+  only to the Voice Gateway, never directly to Gemini.
 - Never put raw name, email, or phone in a cookie, URL, or JWT claim — only opaque, server-issued
   identifiers.
 - Server-side usage is the source of truth.
@@ -30,6 +31,8 @@ individuals who need more than the free daily allowance use the Contact Sales fo
 - Do not silently introduce a new third-party database. The storage abstraction
   (`apps/web/src/lib/server/store/`) is currently in-memory and explicitly documented as
   non-durable — do not describe it as production-ready persistence.
+- Gemini must play the prospect, never the assistant/coach. Keep model names configurable
+  (`GEMINI_MODEL`, default `gemini-3.8-live`), never hardcoded in more than one place.
 
 ## Build order
 Follow `docs/CLAUDE_CODE_PLAN.md` one phase at a time. Do not jump ahead.

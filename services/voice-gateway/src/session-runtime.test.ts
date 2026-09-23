@@ -297,4 +297,91 @@ describe("CallSessionRuntime", () => {
 
     expect(provider.sentAudio).toHaveLength(0);
   });
+
+  it("forwards provider audio to the browser once active", async () => {
+    const { deps, provider, events } = makeDeps();
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+    await connectAndActivate(runtime, provider);
+
+    provider.emit({ type: "audio", data: "cHJvc3BlY3Q=" });
+
+    expect(events).toContainEqual({ type: "audio", data: "cHJvc3BlY3Q=" });
+  });
+
+  it("does not forward provider audio received before the call is active", async () => {
+    const { deps, provider, events } = makeDeps();
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+    await runtime.start();
+
+    provider.emit({ type: "audio", data: "dG9vLWVhcmx5" });
+
+    expect(events.some((e) => e.type === "audio")).toBe(false);
+  });
+
+  it("forwards an interruption (barge-in) to the browser while active", async () => {
+    const { deps, provider, events } = makeDeps();
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+    await connectAndActivate(runtime, provider);
+
+    provider.emit({ type: "interrupted" });
+
+    expect(events).toContainEqual({ type: "interrupted" });
+  });
+
+  it("forwards user and prospect transcript events while active", async () => {
+    const { deps, provider, events } = makeDeps();
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+    await connectAndActivate(runtime, provider);
+
+    provider.emit({ type: "transcript", role: "user", text: "hi there", final: true });
+    provider.emit({ type: "transcript", role: "prospect", text: "Who is this?", final: false });
+
+    expect(events).toContainEqual({ type: "transcript", role: "user", text: "hi there", final: true });
+    expect(events).toContainEqual({ type: "transcript", role: "prospect", text: "Who is this?", final: false });
+  });
+
+  it("passes the provider's classified error code through to the client on a pre-active failure", async () => {
+    const provider = new FakeProvider();
+    const { deps, events, failedSessions } = makeDeps({ provider });
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+
+    await runtime.start();
+    provider.emit({ type: "error", code: "provider_auth_error", message: "invalid key" });
+    await vi.waitFor(() => expect(failedSessions).toEqual(["session-1"]));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "provider_auth_error" }),
+    );
+    // Never leaks the provider's raw error text to the client.
+    expect(events.find((e) => e.type === "error")).not.toMatchObject({ message: "invalid key" });
+  });
+
+  it("finalizes usage exactly once when the provider errors out during an active call", async () => {
+    const { deps, provider, finalizeCallUsage, clock } = makeDeps();
+    const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
+    await connectAndActivate(runtime, provider);
+
+    clock.advanceMs(2_000);
+    provider.emit({ type: "error", code: "provider_connection_error", message: "lost connection" });
+    await vi.waitFor(() => expect(finalizeCallUsage).toHaveBeenCalledTimes(1));
+
+    expect(finalizeCallUsage).toHaveBeenCalledWith(expect.objectContaining({ durationSeconds: 2 }));
+  });
+
+  it("looks up the scenario by the token's scenarioId to build a real persona system prompt", async () => {
+    const { deps, provider } = makeDeps();
+    const connectSpy = vi.spyOn(provider, "connect");
+    const runtime = new CallSessionRuntime(
+      makeSession({ scenarioId: "busy-vp" }),
+      makeClaims({ scenarioId: "busy-vp" }),
+      deps,
+    );
+
+    await runtime.start();
+
+    expect(connectSpy).toHaveBeenCalledTimes(1);
+    const { systemPrompt } = connectSpy.mock.calls[0]![0];
+    expect(systemPrompt).toContain("Jordan Blake");
+    expect(systemPrompt).toContain("Northstar Software");
+  });
 });
