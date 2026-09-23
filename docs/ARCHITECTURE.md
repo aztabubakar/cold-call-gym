@@ -11,13 +11,14 @@ Browser ↔ Next.js web app ↔ in-memory storage abstraction
                        v
                  Gemini Live
 
-Cold Call Gym has no accounts and no database. The web app and the voice gateway are still two
-separate services/processes — that split from earlier phases is unchanged — but with Supabase
-removed there is no longer a shared Postgres instance for both to talk to directly. The web app
-owns the storage abstraction (leads, call sessions, sales inquiries — see "Storage abstraction"
-below) and remains the single source of truth; the voice gateway reaches it over a small internal
-HTTP API instead of a database connection. See "Storage abstraction" and "Voice session lifecycle"
-below for exactly how that works.
+Cold Call Gym has no accounts and no relational database. The web app and the voice gateway are
+still two separate services/processes — that split from earlier phases is unchanged — but with
+Supabase removed there is no longer a shared Postgres instance for both to talk to directly. The
+web app owns the storage abstraction (leads, call sessions, sales inquiries — see "Storage
+abstraction" below, including the Redis-backed production implementation) and remains the single
+source of truth; the voice gateway reaches it over a small internal HTTP API instead of a
+database connection. See "Storage abstraction" and "Voice session lifecycle" below for exactly
+how that works.
 
 ## Web responsibilities
 - the `/start` access form (name + email + phone → opaque access-session cookie — see
@@ -51,20 +52,27 @@ Real-time audio is long-lived and stateful. A dedicated gateway is easier to ope
 
 ## Storage abstraction
 
-Cold Call Gym has no database. `apps/web/src/lib/server/store/` defines the interfaces
+Cold Call Gym has no relational database. `apps/web/src/lib/server/store/` defines the interfaces
 (`LeadStore`, `CallSessionStore`, `SalesInquiryStore` — see `types.ts`) that all application code
-depends on, and a single in-memory implementation of them (`memory-store.ts`) that everything
-currently resolves to (`index.ts`).
+depends on. `index.ts` selects the backing implementation automatically, based on environment:
 
-**This implementation is explicitly not durable and not multi-instance-safe** — state lives in a
-plain module-level `Map` and is lost on every process restart, and is not shared across more than
-one running instance of the web app. Within a single process it IS genuinely atomic (every store
-method runs synchronously to completion, so JavaScript's single-threaded execution model
-reproduces the old Postgres row-lock/advisory-lock guarantees — see `memory-store.ts`'s doc
-comment and `apps/web/src/lib/server/store/usage-math.ts` for the entitlement math this relies
-on). See `docs/DEPLOYMENT.md`'s "Production persistence" section for what replacing this with a
-real datastore requires — it means writing a new module against the same interfaces in `types.ts`
-and changing what `index.ts` exports, with no changes anywhere else in the app.
+- **`memory-store.ts`** — a plain in-process `Map`. Used only when
+  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` aren't set (local dev, zero external setup
+  required). **Not durable and not multi-instance-safe** — state is lost on every process restart
+  and isn't shared across more than one running instance. Within a single process it IS genuinely
+  atomic (every method runs synchronously to completion, so JS's single-threaded execution model
+  reproduces the old Postgres row-lock/advisory-lock guarantees — see its doc comment).
+- **`redis-store.ts`** — Upstash Redis via its REST client (`@upstash/redis`), which needs no
+  persistent connection and is safe to call from serverless functions. **This is what production
+  (Vercel) actually runs on.** Atomicity across network calls (rather than free, single-process
+  synchronous execution) comes from a real distributed lock scoped per access identity
+  (`redis-lock.ts`) around `finalizeUsage()` — the same purpose as the old Postgres per-user
+  advisory lock, different mechanism. `GET /api/health` reports which backend is active
+  (`"store":"redis"` or `"store":"memory"`).
+
+Both implementations share the same pure, storage-agnostic entitlement math
+(`apps/web/src/lib/server/store/usage-math.ts`) — only how session records are stored/locked
+differs. See `docs/DEPLOYMENT.md`'s "Production persistence" section for setup.
 
 The interfaces are deliberately agnostic about *how* an access identity came to be trusted, so a
 stronger verification step (email OTP, phone verification) could be layered in later — at `/start`
@@ -80,9 +88,9 @@ server-side, split across two layers:
   directly (no network hop needed — it runs in the same process as the store). Exposes
   `getEntitlement` and `authorizeCallSession`, both keyed by `accessId` (a lead's opaque id — see
   `docs/SECURITY.md`).
-- `apps/web/src/lib/server/store/memory-store.ts`'s `finalizeUsage()` — the *only* code path that
-  ever records billable usage. It runs the calculation synchronously against the in-memory store
-  (see "Storage abstraction" above for what that does and doesn't guarantee).
+- `CallSessionStore.finalizeUsage()` — the *only* code path that ever records billable usage,
+  implemented by whichever backend `index.ts` selects (`memory-store.ts` or `redis-store.ts` —
+  see "Storage abstraction" above for what each guarantees).
 
 API surface:
 - `GET /api/entitlement` — the current access identity's free-plan entitlement (`{ plan,

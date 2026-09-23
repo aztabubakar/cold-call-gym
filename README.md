@@ -25,9 +25,11 @@ the access session does and does not prove.
 
 - **No accounts, no Supabase.** Cold Call Gym previously used Supabase for auth and Postgres
   storage; both have been removed from the active architecture (see
-  `legacy/supabase/README.md` for the archived history). The app now has no database — a
-  pluggable, documented-as-non-durable in-memory storage abstraction stands in for one (see
-  `apps/web/src/lib/server/store/`).
+  `legacy/supabase/README.md` for the archived history). Leads/call-session records now live in a
+  pluggable storage abstraction (`apps/web/src/lib/server/store/`) — Redis-backed (Upstash) in
+  production when `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set, falling back to a
+  non-durable in-memory store when they aren't (local dev, zero setup). `GET /api/health` reports
+  which is active.
 - **Access, not authentication.** `/start` collects name + email + phone, creates a lead record,
   and sets an opaque server-generated access-session cookie. That cookie unlocks `/dashboard`,
   `/scenarios`, and `/call` and is the key the daily free-usage allowance is tracked against — it
@@ -51,8 +53,7 @@ the access session does and does not prove.
   expanded access goes through Contact Sales (`POST /api/contact-sales`). See
   `docs/MONETIZATION.md`.
 
-Not yet implemented: the full coaching evaluator, a durable production datastore.
-There is no payments phase.
+Not yet implemented: the full coaching evaluator. There is no payments phase.
 
 ## Architecture
 - `apps/web`: Next.js + TypeScript — owns the lead/call-session storage abstraction
@@ -64,11 +65,13 @@ There is no payments phase.
 
 Recommended deployment:
 - Web: Vercel
+- Storage: Upstash Redis (add from Vercel's Storage tab)
 - Voice gateway: Render or Cloud Run
 
-There is no database and no payments provider to deploy. Read
-`docs/DEPLOYMENT.md`'s "Production persistence" section before launching — the in-memory store is
-not durable and must be replaced before real usage depends on it.
+There is no payments provider to deploy, and no relational database/migrations to manage. Read
+`docs/DEPLOYMENT.md`'s "Production persistence" section before launching — without
+`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` set, the app falls back to a non-durable
+in-memory store that will not work correctly across Vercel's serverless instances.
 
 ## Important
 `VOICE_PROVIDER=mock` (default) keeps the deterministic mock provider for local dev/CI — no
@@ -88,8 +91,9 @@ cp services/voice-gateway/.env.example services/voice-gateway/.env
 
 Fill in `apps/web/.env.local`: `VOICE_GATEWAY_URL`, `VOICE_GATEWAY_SIGNING_SECRET`, and
 `INTERNAL_API_KEY` (a shared secret the voice gateway uses to call this app's internal
-call-session API — see `docs/ARCHITECTURE.md`). No database credentials are needed; the app has
-no external dependencies to configure to run locally.
+call-session API — see `docs/ARCHITECTURE.md`). `UPSTASH_REDIS_REST_URL`/
+`UPSTASH_REDIS_REST_TOKEN` are optional locally (the app falls back to an in-memory store with
+zero external setup) but **required for a real deployment** — see `docs/DEPLOYMENT.md`.
 
 Fill in `services/voice-gateway/.env` too (copied from `.env.example`): `WEB_APP_URL` (the web
 app's base URL, e.g. `http://localhost:3000` locally) and `INTERNAL_API_KEY` (must match the web
@@ -109,11 +113,12 @@ pnpm dev:gateway
 Visit `/start`, submit name/email/phone, and you're immediately at `/dashboard` — no signup, no
 login.
 
-Note: right after starting `pnpm dev:web` for the first time, the very first requests to
-different routes can transiently miss each other's in-memory state while Next.js compiles each
-route on demand — see the doc comment on `apps/web/src/lib/server/store/memory-store.ts` for why,
-and why this doesn't happen in a production build (`pnpm build && pnpm --filter web start`). If
-`/start` seems not to have "taken" on your very first try in dev mode, submit it again.
+Note (in-memory store / local dev only): right after starting `pnpm dev:web` for the first time,
+the very first requests to different routes can transiently miss each other's in-memory state
+while Next.js compiles each route on demand — see the doc comment on
+`apps/web/src/lib/server/store/memory-store.ts` for why, and why this doesn't happen in a
+production build (`pnpm build && pnpm --filter web start`). If `/start` seems not to have "taken"
+on your very first try in dev mode, submit it again. This doesn't apply once Redis is configured.
 
 ## Validate
 ```bash

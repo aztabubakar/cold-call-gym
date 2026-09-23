@@ -28,9 +28,14 @@ individuals who need more than the free daily allowance use the Contact Sales fo
 - Add tests for entitlement math, access-session mechanics, session lifecycle, and scoring.
 - Keep the mock voice provider working for CI/local development.
 - Keep model names in environment variables.
-- Do not silently introduce a new third-party database. The storage abstraction
-  (`apps/web/src/lib/server/store/`) is currently in-memory and explicitly documented as
-  non-durable — do not describe it as production-ready persistence.
+- Storage abstraction (`apps/web/src/lib/server/store/`): Upstash Redis
+  (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`) is the durable, multi-instance-safe
+  production backend — required for a real Vercel deployment, since Vercel serverless functions
+  don't share process memory between requests. In-memory (`memory-store.ts`) is the local-dev-only
+  fallback when those env vars aren't set — never describe it as production-ready persistence, and
+  don't introduce yet another datastore without a clear reason; this one was added deliberately,
+  behind the same `LeadStore`/`CallSessionStore`/`SalesInquiryStore` interfaces, not bolted on
+  separately.
 - Gemini must play the prospect, never the assistant/coach. Keep model names configurable
   (`GEMINI_MODEL`, default `gemini-3.8-live`), never hardcoded in more than one place.
 

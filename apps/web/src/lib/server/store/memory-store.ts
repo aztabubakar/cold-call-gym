@@ -44,12 +44,13 @@ import { computeFinalize, sumUsedToday } from "./usage-math";
  *     handled by that one process — this is what finalizeUsage() relies on
  *     to reproduce the old Postgres row-lock/advisory-lock behavior.
  *
- * Before a real production launch this MUST be swapped for a durable,
- * shared datastore (Postgres, Redis, etc. — deliberately not chosen here,
- * see docs/DEPLOYMENT.md "Production persistence"). Swapping it means
- * writing a new module that implements the same LeadStore/CallSessionStore
- * /SalesInquiryStore interfaces (types.ts) and changing what index.ts
- * exports — no call site outside this directory needs to change.
+ * This is now only the LOCAL DEV FALLBACK: ./index.ts automatically uses
+ * the durable, multi-instance-safe Redis-backed implementation
+ * (redis-store.ts) instead, whenever UPSTASH_REDIS_REST_URL /
+ * UPSTASH_REDIS_REST_TOKEN are configured — which is required for a real
+ * deployment on Vercel (see docs/DEPLOYMENT.md's "Production
+ * persistence"). This module only remains active when those env vars are
+ * absent, so local development keeps working with zero external setup.
  */
 
 const leads = new Map<string, Lead>();

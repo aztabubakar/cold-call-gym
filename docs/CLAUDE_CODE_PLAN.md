@@ -1,19 +1,32 @@
 # Claude Code Build Plan
 
 ## Architecture update: accounts and Supabase removed
-Cold Call Gym no longer has accounts, passwords, or a database. Supabase (auth + Postgres) has
+Cold Call Gym no longer has accounts or a relational database. Supabase (auth + Postgres) has
 been removed from the active architecture entirely — the old migrations are archived at
 `legacy/supabase/` as a historical record only. Access is now lead-gated: submitting name + email
 + phone at `/start` immediately grants access via an opaque session cookie (access gating, not
-authentication — see `docs/SECURITY.md`). Storage is a pluggable, currently in-memory
-abstraction (`apps/web/src/lib/server/store/`), explicitly documented as non-durable until a real
-datastore is chosen (see `docs/DEPLOYMENT.md`'s "Production persistence"). The voice gateway is
-unchanged in spirit — still the authoritative timer/quota enforcer — but now reaches the web app's
-session state over a small internal HTTP API instead of a shared Postgres connection (see
-`docs/ARCHITECTURE.md`). Every bullet below that mentions Supabase, `call_sessions`,
-signup/login, or a Postgres RPC describes what was built AT THE TIME, not current behavior — see
-`docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and `docs/MONETIZATION.md` for what's actually running
-now.
+authentication — see `docs/SECURITY.md`). Storage is a pluggable abstraction
+(`apps/web/src/lib/server/store/`) — see "Storage update: durable Redis backend added" below for
+what actually backs it now. The voice gateway is unchanged in spirit — still the authoritative
+timer/quota enforcer — but now reaches the web app's session state over a small internal HTTP API
+instead of a shared Postgres connection (see `docs/ARCHITECTURE.md`). Every bullet below that
+mentions Supabase, `call_sessions`, signup/login, or a Postgres RPC describes what was built AT
+THE TIME, not current behavior — see `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and
+`docs/MONETIZATION.md` for what's actually running now.
+
+## Storage update: durable Redis backend added
+The in-memory-only storage from the "Architecture update" above turned out to break the app in
+real production use on Vercel: serverless functions don't share process memory between requests,
+so a lead created by `/start` could be invisible on the very next request. Fixed by adding an
+Upstash Redis-backed implementation (`apps/web/src/lib/server/store/redis-store.ts` +
+`redis-lock.ts` for the distributed lock `finalizeUsage()` needs once atomicity can't come for
+free from single-process synchronous execution) — `index.ts` selects it automatically whenever
+`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set, falling back to the original
+in-memory store otherwise (so local dev still needs zero external setup). `GET /api/health`
+reports which backend is active. This is a deliberate, minimal addition behind the exact same
+`LeadStore`/`CallSessionStore`/`SalesInquiryStore` interfaces — not a new architecture, not a
+relational database, not accounts. See `docs/ARCHITECTURE.md`'s "Storage abstraction" and
+`docs/DEPLOYMENT.md`'s "Production persistence".
 
 ## Business model update (post-Phase 3)
 Cold Call Gym's MVP business model changed to **free plan only, no

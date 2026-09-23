@@ -55,6 +55,9 @@ Server only:
   session API (`apps/web/src/app/api/internal/sessions/[id]/route.ts`). This replaces the old
   Supabase service-role key as the thing that must never reach the browser: no `NEXT_PUBLIC_`
   variable holds it, and nothing in client-rendered code imports the module that reads it.
+- `UPSTASH_REDIS_REST_TOKEN` — read only in `apps/web/src/lib/server/store/redis-store.ts`
+  (`server-only`-guarded, like every other module in that directory). No `NEXT_PUBLIC_` variant
+  exists; nothing client-rendered ever touches the storage layer directly.
 
 Cold Call Gym has no self-service payment flow, so there is no Stripe
 secret key or webhook secret to manage, and no database credentials at all (there is no
@@ -127,8 +130,9 @@ Cold Call Gym has no paid credits (see `docs/MONETIZATION.md`) — this
 section describes how the single free daily allowance is protected.
 
 - The only code path that ever records billable usage against the daily
-  allowance is `CallSessionStore.finalizeUsage()`
-  (`apps/web/src/lib/server/store/memory-store.ts`). It is only ever called from two places: the
+  allowance is `CallSessionStore.finalizeUsage()`, implemented by whichever backend is active
+  (`apps/web/src/lib/server/store/memory-store.ts` or `redis-store.ts` — see
+  `docs/ARCHITECTURE.md`'s "Storage abstraction"). It is only ever called from two places: the
   authorization path's session creation (no usage written there) and the internal session API's
   `finalize` action, which itself requires the `INTERNAL_API_KEY` bearer token — there is no
   browser-callable path to it.
@@ -137,11 +141,13 @@ section describes how the single free daily allowance is protected.
   There is no browser-callable finalize endpoint at all — the voice gateway
   is the only caller of the finalize action (see below), and it
   supplies duration from its own server-side timer, never from the browser.
-- Concurrent finalize attempts (two sessions for the same access identity, racing) are protected by
-  `finalizeUsage()`'s synchronous, single-process execution — see `docs/MONETIZATION.md`'s
-  "Concurrency protection" and its documented multi-instance limitation. Verified in
-  `apps/web/src/lib/server/store/usage-math.test.ts` (the daily cap is never exceeded, never goes
-  negative, and correctly recomputes from all of an access identity's finalized sessions today).
+- Concurrent finalize attempts (two sessions for the same access identity, racing) are protected
+  by a per-access-identity lock: the in-memory backend gets this for free from synchronous,
+  single-process execution; the Redis backend uses a real distributed lock
+  (`apps/web/src/lib/server/store/redis-lock.ts`) — see `docs/MONETIZATION.md`'s "Concurrency
+  protection". Verified in `usage-math.test.ts` (the pure math), `redis-store.test.ts` (the
+  distributed-lock-backed version), and `redis-lock.test.ts` (the lock itself, including that two
+  concurrent callers on the same key genuinely serialize).
 
 ## Contact Sales
 
@@ -205,13 +211,13 @@ section describes how the single free daily allowance is protected.
 
 ## Known limitations (carried over honestly, not hidden)
 
-- **No durable storage.** See `docs/ARCHITECTURE.md`'s "Storage abstraction" and
-  `docs/DEPLOYMENT.md`'s "Production persistence" — everything (leads, call sessions, sales
-  inquiries) lives in process memory and is lost on restart. Not safe for a real production
-  launch as-is.
-- **No multi-instance consistency.** If more than one instance of the web app runs at once, each
-  has its own independent copy of the in-memory store — entitlement and session state can diverge
-  between instances. A single-instance deployment does not have this problem.
+- **Durable, multi-instance-safe storage requires `UPSTASH_REDIS_REST_URL`/
+  `UPSTASH_REDIS_REST_TOKEN` to be set.** Without them, the app falls back to the in-memory store
+  — everything (leads, call sessions, sales inquiries) lives in process memory, is lost on
+  restart, and is NOT shared across multiple instances (each Vercel serverless invocation can get
+  its own independent copy). See `docs/ARCHITECTURE.md`'s "Storage abstraction" and
+  `docs/DEPLOYMENT.md`'s "Production persistence". `GET /api/health` reports which backend is
+  active — verify it says `"store":"redis"` before depending on production correctness.
 - **The gateway↔web-app link is a single HTTP call per step, with no retry/queue.** If the web app
   is briefly unreachable when the gateway tries to finalize a call, that finalize attempt fails
   outright (see `docs/ARCHITECTURE.md`'s "disconnect handling"). The earlier Supabase-backed

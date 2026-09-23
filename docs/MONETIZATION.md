@@ -40,8 +40,9 @@ counting toward "today" — the allowance is effectively reset without ever
 mutating a stored balance. This is implemented in one place now (there is no
 separate database function to keep in sync): `apps/web/src/lib/server/store/usage-math.ts`
 (`sumUsedToday`, `computeFinalize`), used by both `getEntitlement()`
-(`apps/web/src/lib/server/entitlement.ts`) and the store's `finalizeUsage()`
-(`apps/web/src/lib/server/store/memory-store.ts`).
+(`apps/web/src/lib/server/entitlement.ts`) and the active `CallSessionStore`'s `finalizeUsage()`
+(`apps/web/src/lib/server/store/{memory-store,redis-store}.ts` — see
+`docs/ARCHITECTURE.md`'s "Storage abstraction" for which one is active where).
 
 We key off `usageFinalizedAt` (when usage became final) rather than
 `createdAt` (when the session was created) or a client clock value, so the
@@ -73,16 +74,23 @@ the record isn't re-updated, the original result is returned with
 
 ## Concurrency protection
 
-See the doc comment in `apps/web/src/lib/server/store/memory-store.ts` for the full strategy.
-Summary: `finalizeUsage()` runs synchronously to completion (no `await`
-between reading and writing shared state), so JavaScript's single-threaded execution model gives
-genuine atomicity for concurrent requests within one process — this reproduces the old Postgres
-row-lock/advisory-lock guarantee from the earlier Supabase-backed implementation, but **only
-within a single running process**. It recomputes today's used-seconds from scratch on every call
-before ever writing `freeSecondsUsed`, which is what stops two concurrently-active sessions (e.g.
-two browser tabs) from together overcounting past the 600-second daily allowance — verified in
-`apps/web/src/lib/server/store/usage-math.test.ts`. See `docs/DEPLOYMENT.md` for why this breaks
-down across multiple instances, and what a production datastore needs to provide instead.
+Both `finalizeUsage()` implementations recompute today's used-seconds from scratch before ever
+writing `freeSecondsUsed`, which is what stops two concurrently-active sessions (e.g. two browser
+tabs) from together overcounting past the 600-second daily allowance — but they get atomicity
+different ways:
+
+- **`memory-store.ts`** (local dev fallback): runs synchronously to completion (no `await` between
+  reading and writing shared state), so JavaScript's single-threaded execution model gives genuine
+  atomicity **within one process only** — see its doc comment. Verified in
+  `apps/web/src/lib/server/store/usage-math.test.ts`.
+- **`redis-store.ts`** (production, when `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are
+  set — see `docs/DEPLOYMENT.md`): network round-trips mean synchronous execution can't provide
+  this for free, so `finalizeUsage()` wraps its read-recompute-write sequence in a real distributed
+  lock scoped per access identity (`redis-lock.ts`, `SET key value NX PX ttl`) — the same purpose
+  as the old Postgres per-user advisory lock, different mechanism. This is what makes the
+  concurrency guarantee hold **across multiple Vercel serverless instances**, not just within one
+  process. Verified in `redis-store.test.ts` and `redis-lock.test.ts` (including that two
+  concurrent callers on the same key genuinely serialize).
 
 ## Connected to the voice gateway
 
@@ -99,6 +107,8 @@ flow.
 Earlier phases implemented an account-based, Supabase/Postgres-backed system, including at one
 point a paid-credit system (purchasable minutes, one-time "welcome credits" at signup, a
 `credit_ledger` table). Both the accounts and the paid-credit model have been **retired** — Cold
-Call Gym now has neither accounts nor a database at all. The old migrations are archived at
-`legacy/supabase/` purely as a historical record; nothing in the running application reads from or
-writes to them.
+Call Gym now has no accounts and no relational database of any kind. The old migrations are
+archived at `legacy/supabase/` purely as a historical record; nothing in the running application
+reads from or writes to them. (There is now a lightweight Redis-backed store for lead/call-session
+records in production — see `docs/ARCHITECTURE.md`'s "Storage abstraction" — but it's a simple
+key-value store with no schema/migrations, not a relational database.)
