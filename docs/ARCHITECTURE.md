@@ -14,7 +14,8 @@ Browser ↔ Next.js web app ↔ Supabase
 - auth
 - dashboard
 - scenarios
-- billing UI
+- contact sales UI (the only path to expanded access — no billing UI, no
+  self-service payments; see docs/MONETIZATION.md)
 - call history
 - coaching report UI
 - create short-lived voice authorization
@@ -37,33 +38,34 @@ created → authorized → connecting → active → ending → completed
 ## Why separate voice gateway?
 Real-time audio is long-lived and stateful. A dedicated gateway is easier to operate than a short-lived serverless handler.
 
-## Entitlement (Phase 2)
-All usage/credit logic lives server-side, split across two layers:
+## Entitlement (free plan only)
+Cold Call Gym has no paid credits (see `docs/MONETIZATION.md`) — every user
+gets a single free daily allowance (600 seconds/UTC day, no rollover). All
+entitlement logic lives server-side, split across two layers:
 
 - `apps/web/src/lib/server/entitlement.ts` — server-only module (never
   imported by client components) using a service-role Supabase client that
-  bypasses RLS. Exposes `getEntitlement`, `authorizeCallSession`, and
-  `finalizeCallUsage`.
-- `supabase/migrations/003_entitlement_foundation.sql` — the
+  bypasses RLS. Exposes `getEntitlement` and `authorizeCallSession`.
+- `supabase/migrations/004_free_plan_entitlement.sql` — the
   `finalize_call_usage` Postgres function, which is the *only* code path
-  that ever debits paid credits. It runs the balance computation and the
-  ledger write inside one atomic, locked transaction, and only the
-  `service_role` Postgres role may execute it (`authenticated`/`anon` are
-  explicitly revoked).
+  that ever records billable usage. It runs the calculation and the
+  `call_sessions` update inside one atomic, locked transaction, and only
+  the `service_role` Postgres role may execute it (`authenticated`/`anon`
+  are explicitly revoked).
 
 API surface:
-- `GET /api/entitlement` — authenticated user's current free/paid balance.
+- `GET /api/entitlement` — authenticated user's current free-plan
+  entitlement (`{ plan, dailyLimitSeconds, usedTodaySeconds,
+  remainingTodaySeconds, canStartCall, resetsAt }`).
 - `POST /api/voice/session` — authorizes a call (validates scenario +
-  entitlement, creates an `authorized` call_sessions row, returns
-  `maxAllowedSeconds`). Does not yet issue a signed gateway token or
-  connect to a voice provider — that's Phase 3.
-- `POST /api/voice/session/:id/finalize` — development-safe finalize
-  endpoint for the Phase 2 mock call flow; the browser's own timer supplies
-  a *claimed* duration that the server clamps against trusted timestamps
-  before charging anything. Phase 3's voice gateway will call the same
-  underlying `finalizeCallUsage` with server-metered duration instead.
+  entitlement, creates an `authorized` call_sessions row, signs a
+  short-lived voice-gateway token, returns `maxAllowedSeconds`).
+- There is no browser-callable finalize endpoint. The voice gateway is the
+  only caller of `finalize_call_usage()`, using its own service-role
+  credentials and its own server-metered duration — see "Voice session
+  lifecycle" below.
 
-See `docs/MONETIZATION.md` for the allowance/ledger/rounding rules and
+See `docs/MONETIZATION.md` for the allowance/rounding rules and
 `docs/SECURITY.md` for what's locked down and why.
 
 ## Voice session lifecycle (Phase 3)
@@ -111,8 +113,8 @@ on both sides — never sent to the browser). Claims
 - **TTL**: 180 seconds (`VOICE_TOKEN_TTL_SECONDS`) — just enough time to open
   the WebSocket connection, not a session-length credential.
 - **No secrets, no hidden state**: never carries the Gemini key, the
-  Supabase service-role key, credit balances beyond what's needed to
-  authorize this one call, or a scenario's `hidden_state`/persona details.
+  Supabase service-role key, or a scenario's `hidden_state`/persona
+  details.
 - **`maxAllowedSeconds` is signed, not client-suppliable**: the browser
   receives this value in the `POST /api/voice/session` response purely for
   display; it has no way to open a WebSocket with a *different* value,
@@ -204,5 +206,5 @@ whatever `VoiceProvider` `createProvider()` returns
 stub that throws — see `docs/CLAUDE_CODE_PLAN.md`). Swapping
 `VOICE_PROVIDER=gemini` will route calls through it without changing
 token issuance, session-eligibility checks, timing, quota enforcement, or
-finalization — the entitlement/billing architecture does not need to
+finalization — the free-plan entitlement architecture does not need to
 change for Phase 4.

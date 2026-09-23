@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   formatDuration,
   DAILY_FREE_SECONDS,
-  SECONDS_PER_CREDIT,
   MAX_CALL_SECONDS,
-  WELCOME_CREDITS,
+  computeMaxAllowedSeconds,
   ScenarioSchema,
-  EntitlementSchema,
+  FreeEntitlementSchema,
   CallAuthorizationSchema,
   VoiceSessionTokenClaimsSchema,
   ClientToGatewayMessageSchema,
@@ -21,6 +20,37 @@ describe("formatDuration", () => {
 
 describe("DAILY_FREE_SECONDS", () => {
   it("is 10 minutes", () => expect(DAILY_FREE_SECONDS).toBe(600));
+});
+
+describe("MAX_CALL_SECONDS", () => {
+  it("matches the voice-gateway default ceiling", () => expect(MAX_CALL_SECONDS).toBe(1800));
+});
+
+describe("computeMaxAllowedSeconds", () => {
+  // Cold Call Gym has no paid credits — a call is authorized for at most
+  // whatever remains of today's free allowance, capped by the gateway's
+  // absolute safety ceiling. The browser has no way to widen this (see
+  // VoiceSessionTokenClaimsSchema's tamper test in
+  // services/voice-gateway/src/lib/token.test.ts).
+  it("1 second remaining authorizes a max of 1 second", () => {
+    expect(computeMaxAllowedSeconds(1, 1800)).toBe(1);
+  });
+
+  it("300 seconds remaining authorizes a max of 300 seconds", () => {
+    expect(computeMaxAllowedSeconds(300, 1800)).toBe(300);
+  });
+
+  it("remaining greater than MAX_CALL_SECONDS is capped at MAX_CALL_SECONDS", () => {
+    expect(computeMaxAllowedSeconds(5000, 1800)).toBe(1800);
+  });
+
+  it("zero remaining authorizes zero", () => {
+    expect(computeMaxAllowedSeconds(0, 1800)).toBe(0);
+  });
+
+  it("never returns a negative value", () => {
+    expect(computeMaxAllowedSeconds(-50, 1800)).toBe(0);
+  });
 });
 
 describe("ScenarioSchema", () => {
@@ -61,29 +91,49 @@ describe("ScenarioSchema", () => {
   });
 });
 
-describe("entitlement constants", () => {
-  it("1 credit = 60 seconds", () => expect(SECONDS_PER_CREDIT).toBe(60));
-  it("MAX_CALL_SECONDS matches the voice-gateway default ceiling", () =>
-    expect(MAX_CALL_SECONDS).toBe(1800));
-  it("welcome grant is 5 credits", () => expect(WELCOME_CREDITS).toBe(5));
-});
-
-describe("EntitlementSchema", () => {
-  it("accepts a well-formed entitlement snapshot", () => {
-    const result = EntitlementSchema.safeParse({
-      freeDailySeconds: 600,
-      freeSecondsUsedToday: 240,
-      freeSecondsRemaining: 360,
-      paidCreditsRemaining: 12,
-      paidSecondsAvailable: 720,
-      totalUsableSeconds: 1080,
+describe("FreeEntitlementSchema", () => {
+  it("accepts a well-formed free-plan entitlement snapshot", () => {
+    const result = FreeEntitlementSchema.safeParse({
+      plan: "free",
+      dailyLimitSeconds: 600,
+      usedTodaySeconds: 123,
+      remainingTodaySeconds: 477,
+      canStartCall: true,
+      resetsAt: "2026-01-02T00:00:00.000Z",
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects a snapshot missing required fields", () => {
-    const result = EntitlementSchema.safeParse({ freeDailySeconds: 600 });
+  it("rejects a plan other than 'free' — there is no paid tier", () => {
+    const result = FreeEntitlementSchema.safeParse({
+      plan: "pro",
+      dailyLimitSeconds: 600,
+      usedTodaySeconds: 0,
+      remainingTodaySeconds: 600,
+      canStartCall: true,
+      resetsAt: "2026-01-02T00:00:00.000Z",
+    });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects a snapshot missing required fields", () => {
+    const result = FreeEntitlementSchema.safeParse({ dailyLimitSeconds: 600 });
+    expect(result.success).toBe(false);
+  });
+
+  it("has no field for a credit balance", () => {
+    const parsed = FreeEntitlementSchema.parse({
+      plan: "free",
+      dailyLimitSeconds: 600,
+      usedTodaySeconds: 0,
+      remainingTodaySeconds: 600,
+      canStartCall: true,
+      resetsAt: "2026-01-02T00:00:00.000Z",
+      // A caller might try to smuggle a credit balance through — it must be
+      // silently stripped by the schema, not carried into the parsed shape.
+      paidCreditsRemaining: 999,
+    });
+    expect("paidCreditsRemaining" in parsed).toBe(false);
   });
 });
 
@@ -93,11 +143,10 @@ describe("CallAuthorizationSchema", () => {
       sessionId: "session-1",
       scenarioId: "scenario-1",
       state: "authorized",
-      maxAllowedSeconds: 780,
+      maxAllowedSeconds: 480,
       gatewayUrl: "http://localhost:8787",
       token: "signed.jwt.token",
-      freeSecondsRemaining: 480,
-      paidCreditsRemaining: 5,
+      remainingTodaySeconds: 480,
     });
     expect(result.success).toBe(true);
   });
@@ -107,11 +156,10 @@ describe("CallAuthorizationSchema", () => {
       sessionId: "session-1",
       scenarioId: "scenario-1",
       state: "active",
-      maxAllowedSeconds: 780,
+      maxAllowedSeconds: 480,
       gatewayUrl: "http://localhost:8787",
       token: "signed.jwt.token",
-      freeSecondsRemaining: 480,
-      paidCreditsRemaining: 5,
+      remainingTodaySeconds: 480,
     });
     expect(result.success).toBe(false);
   });
@@ -163,13 +211,12 @@ describe("ClientToGatewayMessageSchema", () => {
 });
 
 describe("GatewayToClientEventSchema", () => {
-  it("accepts a completed event with nonnegative usage", () => {
+  it("accepts a completed event with nonnegative usage and no credit field", () => {
     const result = GatewayToClientEventSchema.safeParse({
       type: "completed",
       sessionId: "session-1",
       durationSeconds: 42,
       freeSecondsUsed: 42,
-      paidCreditsUsed: 0,
     });
     expect(result.success).toBe(true);
   });

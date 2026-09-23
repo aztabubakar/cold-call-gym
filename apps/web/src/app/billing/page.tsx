@@ -1,30 +1,10 @@
-const PACKS = ["50 credits", "150 credits", "400 credits"];
+import { redirect } from "next/navigation";
 
-export default function Billing() {
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <p className="accent">
-            <b>CREDITS</b>
-          </p>
-          <h1>Practice credits</h1>
-          <p className="muted">
-            Use free daily minutes first. Purchased credits continue practice after the free
-            allowance is used.
-          </p>
-        </div>
-      </div>
-      <div className="grid">
-        {PACKS.map((pack) => (
-          <div className="card" key={pack}>
-            <h3>{pack}</h3>
-            <button className="button ghost" disabled>
-              Stripe checkout — Phase 6
-            </button>
-          </div>
-        ))}
-      </div>
-    </>
-  );
+// Cold Call Gym has no self-service payment flow — there is nothing to
+// bill. Teams that need more than the free daily allowance contact sales
+// instead. This route is kept (rather than removed outright) only so any
+// existing bookmark or hardcoded link to /billing lands somewhere useful
+// instead of a 404 or a fake payment page.
+export default function BillingRedirect() {
+  redirect("/contact-sales");
 }

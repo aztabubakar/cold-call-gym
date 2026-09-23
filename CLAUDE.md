@@ -2,16 +2,23 @@
 
 Build Cold Call Gym as a production-quality voice-first SaaS.
 
+## Business model
+Free individual access only: every authenticated user gets 10 minutes
+(600 seconds) of AI voice practice per UTC calendar day, no rollover. There
+is **no self-service payment flow** — no purchased credits, no
+subscriptions, no Stripe integration. Teams or individuals who need more
+than the free daily allowance use the Contact Sales form
+(`/contact-sales`). See `docs/MONETIZATION.md`.
+
 ## Non-negotiables
-- Never expose Gemini, Stripe, or Supabase service-role secrets to the browser.
+- Never expose Gemini or Supabase service-role secrets to the browser.
 - Server-side usage is the source of truth.
-- Do not decrement credits only in client state.
-- Use an immutable credit ledger.
-- Free allowance and purchased credits are separate concepts.
+- Do not compute or enforce entitlement in client state.
+- The Voice Gateway is authoritative for call duration (its own monotonic
+  clock); the browser's countdown is presentation only.
 - Do not store raw audio by default.
-- Use Stripe-hosted payment flows.
-- Validate API input.
-- Add tests for quota, billing, session lifecycle, and scoring.
+- Validate API input, including the Contact Sales form.
+- Add tests for quota, session lifecycle, and scoring.
 - Keep the mock voice provider working for CI/local development.
 - Keep model names in environment variables.
 

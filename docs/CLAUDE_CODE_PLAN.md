@@ -1,5 +1,17 @@
 # Claude Code Build Plan
 
+## Business model update (post-Phase 3)
+Cold Call Gym's MVP business model changed to **free plan only, no
+self-service payments**: a single 10-minute/UTC-day free allowance per
+user, no purchased credits, no subscriptions, no Stripe. Teams needing more
+use Contact Sales (`/contact-sales`). This retired the paid-credit work
+described under Phase 2 below (see
+`supabase/migrations/004_free_plan_entitlement.sql`) and removed Phase 6
+(Stripe) from this plan entirely — see `docs/MONETIZATION.md` for the
+current model. The Phase 2/3 bullets below are left as an accurate record
+of what was actually built at the time, not a description of current
+behavior.
+
 ## Phase 1 — Foundation ✅ complete
 - monorepo installs/builds
 - Supabase auth
@@ -52,11 +64,12 @@
 - post-call evaluator
 - report UI
 
-## Phase 6 — Stripe
-- checkout
-- webhook
-- idempotent credit grant
-- billing history
+## Phase 6 — retired (no self-service payments)
+Cold Call Gym's MVP has no Stripe integration, purchased credits, or
+subscriptions — see "Business model update" at the top of this file and
+`docs/MONETIZATION.md`. Expanded access is handled entirely through
+Contact Sales, already implemented (see `supabase/migrations/
+005_sales_inquiries.sql`, `POST /api/contact-sales`, `/contact-sales`).
 
 ## Phase 7 — Production hardening
 - logging

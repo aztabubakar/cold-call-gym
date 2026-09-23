@@ -38,22 +38,20 @@ export default async function CallPage({
   // usage is finalized.
   const entitlement = await getEntitlement(user.id);
 
-  if (entitlement.totalUsableSeconds <= 0) {
+  if (!entitlement.canStartCall) {
     return (
       <div className="call card">
         <p className="accent">
-          <b>OUT OF PRACTICE TIME</b>
+          <b>DAILY LIMIT REACHED</b>
         </p>
-        <h1>You&apos;ve used today&apos;s free practice time.</h1>
-        <p className="muted">
-          Free minutes reset daily. Come back tomorrow, or buy credits to keep practicing today.
-        </p>
+        <h1>You&apos;ve used today&apos;s free practice allowance.</h1>
+        <p className="muted">Your allowance will reset automatically.</p>
         <div className="call-controls">
           <Link className="button ghost" href="/dashboard">
-            Come back tomorrow
+            Back to Dashboard
           </Link>
-          <Link className="button" href="/billing">
-            Get more credits
+          <Link className="button" href="/contact-sales">
+            Contact Sales
           </Link>
         </div>
       </div>
@@ -67,8 +65,7 @@ export default async function CallPage({
       prospectName={scenario ? (scenario.persona.name as string) ?? scenario.prospect_role : "Jordan Blake"}
       prospectTitle={scenario ? scenario.prospect_role : "VP of Sales"}
       prospectCompany={scenario ? scenario.prospect_company : "Northstar Software"}
-      freeSecondsRemaining={entitlement.freeSecondsRemaining}
-      paidCreditsRemaining={entitlement.paidCreditsRemaining}
+      remainingTodaySeconds={entitlement.remainingTodaySeconds}
     />
   );
 }

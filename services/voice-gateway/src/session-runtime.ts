@@ -44,7 +44,7 @@ type Phase = "connecting" | "active" | "ending" | "completed" | "failed";
  *   connecting -> active -> ending -> completed
  *   connecting -> failed                          (provider never connected)
  *
- * Finalization (the only path that spends credits) is guarded so it runs
+ * Finalization (the only path that records billable usage) is guarded so it runs
  * at most once per connection regardless of how many triggers fire —
  * explicit `end`, socket close, quota cutoff, or a provider error can all
  * race, but only the first one does anything; the rest observe the same
@@ -305,7 +305,6 @@ export class CallSessionRuntime {
           sessionId: this.sessionId,
           durationSeconds: result.durationSeconds,
           freeSecondsUsed: result.freeSecondsUsed,
-          paidCreditsUsed: result.paidCreditsUsed,
         },
         "session completed",
       );
@@ -314,7 +313,6 @@ export class CallSessionRuntime {
         sessionId: this.sessionId,
         durationSeconds: result.durationSeconds,
         freeSecondsUsed: result.freeSecondsUsed,
-        paidCreditsUsed: result.paidCreditsUsed,
       });
     } catch (err) {
       this.deps.log.error({ sessionId: this.sessionId, err: String(err) }, "finalize failed");

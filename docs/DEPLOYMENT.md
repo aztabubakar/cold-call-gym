@@ -12,7 +12,7 @@ workflows (`workflow_dispatch` only — neither runs on push):
 - `.github/workflows/supabase-seed.yml` — runs only
   `supabase/seed.sql` (an idempotent upsert of scenario rows, keyed by
   unique `slug`) via `supabase db query --file`. Safe to re-run; never
-  touches `call_sessions`, `credit_ledger`, `profiles`, or `auth.users`.
+  touches `call_sessions`, `profiles`, `auth.users`, or `sales_inquiries`.
 
 Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
 `SUPABASE_DB_PASSWORD`. Trigger deploy first, then seed, from the Actions
@@ -23,10 +23,11 @@ Set:
 - NEXT_PUBLIC_SUPABASE_URL
 - NEXT_PUBLIC_SUPABASE_ANON_KEY
 - SUPABASE_SERVICE_ROLE_KEY
-- STRIPE_SECRET_KEY
-- STRIPE_WEBHOOK_SECRET
 - VOICE_GATEWAY_URL
 - VOICE_GATEWAY_SIGNING_SECRET
+
+Cold Call Gym has no self-service payment flow, so there are no Stripe
+environment variables to set (see `docs/MONETIZATION.md`).
 
 ## Voice Gateway — Render / Cloud Run
 Set:
@@ -54,10 +55,11 @@ present — useful for a load-balancer health check to distinguish "process
 is up" from "process is actually able to do its job."
 
 ## Production checklist
-- test Stripe webhook
-- verify no negative credits
-- verify call stops at quota limit (see docs/ARCHITECTURE.md's Phase 3
-  section for how `maxAllowedSeconds` / `MAX_CALL_SECONDS` interact)
+- verify daily usage never goes negative and never exceeds the 600-second
+  allowance, including under concurrent calls
+- verify call stops at quota limit (see docs/ARCHITECTURE.md's voice
+  session lifecycle section for how `maxAllowedSeconds` / `MAX_CALL_SECONDS`
+  interact)
 - verify disconnect recovery
 - verify no secrets in browser
 - document Gemini quota/rate limits

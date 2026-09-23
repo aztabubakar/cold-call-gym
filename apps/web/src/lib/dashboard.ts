@@ -1,4 +1,4 @@
-import { DAILY_FREE_SECONDS, type Entitlement } from "@cold-call-gym/shared";
+import { DAILY_FREE_SECONDS, type FreeEntitlement } from "@cold-call-gym/shared";
 import { createClient } from "./supabase/server";
 import { getEntitlement } from "./server/entitlement";
 
@@ -17,20 +17,26 @@ export type RecommendedScenario = {
   objective: string;
 };
 
-export type DashboardData = Entitlement & {
+export type DashboardData = FreeEntitlement & {
   callsThisWeek: number;
   recentSessions: RecentSession[];
   recommended: RecommendedScenario[];
   supabaseConfigured: boolean;
 };
 
-const EMPTY_ENTITLEMENT: Entitlement = {
-  freeDailySeconds: DAILY_FREE_SECONDS,
-  freeSecondsUsedToday: 0,
-  freeSecondsRemaining: DAILY_FREE_SECONDS,
-  paidCreditsRemaining: 0,
-  paidSecondsAvailable: 0,
-  totalUsableSeconds: DAILY_FREE_SECONDS,
+function nextUtcMidnightIso(): string {
+  const startOfDayUtc = new Date();
+  startOfDayUtc.setUTCHours(0, 0, 0, 0);
+  return new Date(startOfDayUtc.getTime() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+const EMPTY_ENTITLEMENT: FreeEntitlement = {
+  plan: "free",
+  dailyLimitSeconds: DAILY_FREE_SECONDS,
+  usedTodaySeconds: 0,
+  remainingTodaySeconds: DAILY_FREE_SECONDS,
+  canStartCall: true,
+  resetsAt: nextUtcMidnightIso(),
 };
 
 const EMPTY_DASHBOARD: DashboardData = {
@@ -47,7 +53,7 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
   }
 
   try {
-    // Authoritative free/paid balance — same server-only computation used by
+    // Authoritative daily allowance — same server-only computation used by
     // GET /api/entitlement and the call-authorization path. Never derive
     // this from a client-supplied value.
     const entitlement = await getEntitlement(userId);

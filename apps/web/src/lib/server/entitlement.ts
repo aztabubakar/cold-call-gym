@@ -1,67 +1,58 @@
 import "server-only";
 import {
   DAILY_FREE_SECONDS,
-  SECONDS_PER_CREDIT,
   MAX_CALL_SECONDS,
-  type Entitlement,
+  computeMaxAllowedSeconds,
+  type FreeEntitlement,
 } from "@cold-call-gym/shared";
 import { createServiceRoleClient } from "../supabase/service";
 
 /**
- * Server-authoritative entitlement snapshot. Never trust a browser-supplied
- * balance — this is always recomputed from the database via the
- * service-role client (RLS-bypassing, server-only).
+ * Server-authoritative free-plan entitlement snapshot. Never trust a
+ * browser-supplied value — this is always recomputed from the database via
+ * the service-role client (RLS-bypassing, server-only).
  *
- * Daily free allowance resets on a UTC calendar-day boundary. Rather than
- * mutating/decrementing a stored balance at midnight (which would need a
- * cron job), we derive freeSecondsUsedToday on every read as:
+ * Cold Call Gym has no paid credits, no subscriptions, and no Stripe
+ * integration (see docs/MONETIZATION.md) — every user gets a single free
+ * daily allowance. Daily free allowance resets on a UTC calendar-day
+ * boundary. Rather than mutating/decrementing a stored balance at midnight
+ * (which would need a cron job), we derive usedTodaySeconds on every read
+ * as:
  *
  *   sum(call_sessions.free_seconds_used)
  *   where usage_finalized_at falls within [start of today UTC, now)
  *
- * so "today's free minutes" simply stops counting sessions from a previous
- * UTC day without ever needing a reset job. See
- * supabase/migrations/003_entitlement_foundation.sql for the matching
+ * so "today's usage" simply stops counting sessions from a previous UTC day
+ * without ever needing a reset job. See
+ * supabase/migrations/004_free_plan_entitlement.sql for the matching
  * server-side (RPC) implementation used at charge time.
  */
-export async function getEntitlement(userId: string): Promise<Entitlement> {
+export async function getEntitlement(userId: string): Promise<FreeEntitlement> {
   const supabase = createServiceRoleClient();
 
   const startOfDayUtc = new Date();
   startOfDayUtc.setUTCHours(0, 0, 0, 0);
+  const resetsAt = new Date(startOfDayUtc.getTime() + 24 * 60 * 60 * 1000);
 
-  const [freeUsedResult, ledgerResult] = await Promise.all([
-    supabase
-      .from("call_sessions")
-      .select("free_seconds_used")
-      .eq("user_id", userId)
-      .not("usage_finalized_at", "is", null)
-      .gte("usage_finalized_at", startOfDayUtc.toISOString()),
-    supabase.from("credit_ledger").select("credits_delta").eq("user_id", userId),
-  ]);
+  const { data, error } = await supabase
+    .from("call_sessions")
+    .select("free_seconds_used")
+    .eq("user_id", userId)
+    .not("usage_finalized_at", "is", null)
+    .gte("usage_finalized_at", startOfDayUtc.toISOString());
 
-  if (freeUsedResult.error) throw freeUsedResult.error;
-  if (ledgerResult.error) throw ledgerResult.error;
+  if (error) throw error;
 
-  const freeSecondsUsedToday = (freeUsedResult.data ?? []).reduce(
-    (sum, row) => sum + (row.free_seconds_used ?? 0),
-    0,
-  );
-  const freeSecondsRemaining = Math.max(0, DAILY_FREE_SECONDS - freeSecondsUsedToday);
-
-  const paidCreditsRemaining = Math.max(
-    0,
-    (ledgerResult.data ?? []).reduce((sum, row) => sum + (row.credits_delta ?? 0), 0),
-  );
-  const paidSecondsAvailable = paidCreditsRemaining * SECONDS_PER_CREDIT;
+  const usedTodaySeconds = (data ?? []).reduce((sum, row) => sum + (row.free_seconds_used ?? 0), 0);
+  const remainingTodaySeconds = Math.max(0, DAILY_FREE_SECONDS - usedTodaySeconds);
 
   return {
-    freeDailySeconds: DAILY_FREE_SECONDS,
-    freeSecondsUsedToday,
-    freeSecondsRemaining,
-    paidCreditsRemaining,
-    paidSecondsAvailable,
-    totalUsableSeconds: freeSecondsRemaining + paidSecondsAvailable,
+    plan: "free",
+    dailyLimitSeconds: DAILY_FREE_SECONDS,
+    usedTodaySeconds,
+    remainingTodaySeconds,
+    canStartCall: remainingTodaySeconds > 0,
+    resetsAt: resetsAt.toISOString(),
   };
 }
 
@@ -70,14 +61,13 @@ export type CallAuthorizationCore = {
   scenarioId: string;
   state: "authorized";
   maxAllowedSeconds: number;
-  freeSecondsRemaining: number;
-  paidCreditsRemaining: number;
+  remainingTodaySeconds: number;
 };
 
 export type AuthorizeCallResult =
   | { authorization: CallAuthorizationCore }
   | { error: "scenario_not_found" }
-  | { error: "no_entitlement"; entitlement: Entitlement };
+  | { error: "no_entitlement"; entitlement: FreeEntitlement };
 
 /**
  * Server-side foundation for authorizing a future voice call. Validates
@@ -90,16 +80,14 @@ export type AuthorizeCallResult =
  * starting anything.
  *
  * This is a soft gate: it reads the current entitlement and rejects when
- * usable time is zero, but doesn't debit anything, so a benign race between
- * two concurrent authorize calls isn't a financial risk. The HARD, atomic
- * gate is the finalize_call_usage() Postgres RPC
- * (supabase/migrations/003_entitlement_foundation.sql) — as of Phase 3 the
- * voice gateway (services/voice-gateway/src/lib/entitlement.ts) is the only
- * caller, using its own service-role credentials and its own
- * gateway-timed duration. The web app deliberately does NOT expose an HTTP
- * endpoint that lets the browser submit a duration for finalization; that
- * was a Phase 2 development convenience and has been removed now that the
- * gateway is authoritative.
+ * there's no time left today, but doesn't write any usage, so a benign race
+ * between two concurrent authorize calls isn't a correctness risk. The
+ * HARD, atomic gate is the finalize_call_usage() Postgres RPC
+ * (supabase/migrations/004_free_plan_entitlement.sql) — the voice gateway
+ * (services/voice-gateway/src/lib/entitlement.ts) is the only caller, using
+ * its own service-role credentials and its own gateway-timed duration. The
+ * web app deliberately does NOT expose an HTTP endpoint that lets the
+ * browser submit a duration for finalization.
  */
 export async function authorizeCallSession(
   userId: string,
@@ -118,11 +106,11 @@ export async function authorizeCallSession(
   if (!scenario) return { error: "scenario_not_found" };
 
   const entitlement = await getEntitlement(userId);
-  if (entitlement.totalUsableSeconds <= 0) {
+  if (!entitlement.canStartCall) {
     return { error: "no_entitlement", entitlement };
   }
 
-  const maxAllowedSeconds = Math.min(entitlement.totalUsableSeconds, MAX_CALL_SECONDS);
+  const maxAllowedSeconds = computeMaxAllowedSeconds(entitlement.remainingTodaySeconds, MAX_CALL_SECONDS);
 
   const { data: session, error: insertError } = await supabase
     .from("call_sessions")
@@ -140,9 +128,7 @@ export async function authorizeCallSession(
       scenarioId: scenario.id as string,
       state: "authorized",
       maxAllowedSeconds,
-      freeSecondsRemaining: entitlement.freeSecondsRemaining,
-      paidCreditsRemaining: entitlement.paidCreditsRemaining,
+      remainingTodaySeconds: entitlement.remainingTodaySeconds,
     },
   };
 }
-

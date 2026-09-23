@@ -17,9 +17,9 @@ Make cold-call practice as repeatable as a gym workout: realistic voice reps, im
 3. Choose/randomize prospect
 4. Start call
 5. Speak naturally with AI prospect
-6. End call or hit limit
+6. End call or hit the daily limit
 7. Get coaching
-8. Practice again or buy credits
+8. Practice again tomorrow, or contact sales for expanded access
 
 ## Starter scenarios
 - Busy executive
@@ -29,13 +29,15 @@ Make cold-call practice as repeatable as a gym workout: realistic voice reps, im
 - Gatekeeper
 - Price objection
 
-## Freemium
-- 10 free voice minutes/day
-- then paid credits
-- 1 credit = 1 extra voice minute
+## Free plan (MVP)
+- 10 free voice minutes per UTC day, per user, no rollover
+- no purchased credits, no subscriptions, no self-service payment
+- teams/individuals needing more contact sales (`/contact-sales`)
 
 ## Non-goals for MVP
 - real outbound dialing
 - CRM integrations
 - enterprise SSO
 - calling real people
+- self-service payments, purchased credits, or subscriptions (Contact Sales
+  is the only path to expanded access)

@@ -23,6 +23,9 @@ export default async function DashboardPage() {
   }
 
   const data = await getDashboardData(user.id);
+  const percentRemaining = data.dailyLimitSeconds > 0
+    ? Math.max(0, Math.min(100, Math.round((data.remainingTodaySeconds / data.dailyLimitSeconds) * 100)))
+    : 0;
 
   return (
     <>
@@ -41,22 +44,36 @@ export default async function DashboardPage() {
 
       <section className="grid stat-grid">
         <div className="card">
-          <div className="metric">{formatDuration(data.freeSecondsRemaining)}</div>
-          <div className="muted">Today&apos;s free practice remaining</div>
-        </div>
-        <div className="card">
-          <div className="metric">{data.paidCreditsRemaining}</div>
-          <div className="muted">Paid credits</div>
-        </div>
-        <div className="card">
-          <div className="metric">{formatDuration(data.totalUsableSeconds)}</div>
-          <div className="muted">Total practice available</div>
+          <div className="muted">Daily Practice</div>
+          <div className="metric">{formatDuration(data.remainingTodaySeconds)} remaining</div>
+          <div className="muted">of {formatDuration(data.dailyLimitSeconds)} today</div>
+          <div className="progress-track">
+            <div
+              className={`progress-bar ${data.remainingTodaySeconds === 0 ? "progress-empty" : ""}`}
+              style={{ width: `${percentRemaining}%` }}
+            />
+          </div>
+          <div className="muted">Resets daily</div>
         </div>
         <div className="card">
           <div className="metric">{data.callsThisWeek}</div>
           <div className="muted">Calls this week</div>
         </div>
       </section>
+
+      {data.remainingTodaySeconds === 0 && (
+        <section className="card panel">
+          <p className="accent">
+            <b>DAILY PRACTICE LIMIT REACHED</b>
+          </p>
+          <p>You&apos;ve used today&apos;s 10-minute free practice allowance.</p>
+          <p className="muted">Your allowance resets tomorrow.</p>
+          <p className="muted">Need more practice time for yourself or your sales team?</p>
+          <Link className="button" href="/contact-sales">
+            Contact Sales
+          </Link>
+        </section>
+      )}
 
       <section className="dashboard-columns">
         <div className="card panel">

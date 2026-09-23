@@ -44,19 +44,16 @@ export const ScenarioSchema = z.object({
 
 export type Scenario = z.infer<typeof ScenarioSchema>;
 
+// Cold Call Gym MVP business model: a single free daily allowance, no
+// purchased credits, no subscriptions, no Stripe. Teams wanting more than
+// this contact sales (see apps/web's /contact-sales) — there is no
+// self-service payment flow.
 export const DAILY_FREE_SECONDS = 600;
-
-// A paid credit covers up to 60 seconds; any started 60-second block costs
-// one credit (1s..60s = 1 credit, 61s = 2 credits, etc).
-export const SECONDS_PER_CREDIT = 60;
 
 // Hard ceiling on a single call's authorized duration, independent of how
 // much entitlement a user has (mirrors services/voice-gateway's
 // MAX_CALL_SECONDS default).
 export const MAX_CALL_SECONDS = 1800;
-
-// One-time promotional credits granted to every new user at signup.
-export const WELCOME_CREDITS = 5;
 
 export function formatDuration(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds));
@@ -65,16 +62,35 @@ export function formatDuration(totalSeconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-export const EntitlementSchema = z.object({
-  freeDailySeconds: z.number(),
-  freeSecondsUsedToday: z.number(),
-  freeSecondsRemaining: z.number(),
-  paidCreditsRemaining: z.number(),
-  paidSecondsAvailable: z.number(),
-  totalUsableSeconds: z.number(),
+/**
+ * The maximum duration a single call may be authorized for: whatever is
+ * left of today's free allowance, capped by the gateway's own absolute
+ * safety ceiling. Never negative. Pulled out as its own pure function so
+ * the authorization boundary (in particular "a user with less than
+ * MAX_CALL_SECONDS remaining can never be authorized for more than they
+ * have left") is directly unit-testable without a live database.
+ */
+export function computeMaxAllowedSeconds(remainingTodaySeconds: number, maxCallSeconds: number): number {
+  return Math.max(0, Math.min(remainingTodaySeconds, maxCallSeconds));
+}
+
+// ---------------------------------------------------------------------------
+// Free-plan entitlement. Server/database-authoritative — see
+// apps/web/src/lib/server/entitlement.ts and docs/MONETIZATION.md. The
+// browser only ever displays this; it never computes or asserts it.
+// ---------------------------------------------------------------------------
+
+export const FreeEntitlementSchema = z.object({
+  plan: z.literal("free"),
+  dailyLimitSeconds: z.number(),
+  usedTodaySeconds: z.number(),
+  remainingTodaySeconds: z.number(),
+  canStartCall: z.boolean(),
+  /** ISO timestamp of the next UTC midnight, when the allowance resets. */
+  resetsAt: z.string(),
 });
 
-export type Entitlement = z.infer<typeof EntitlementSchema>;
+export type FreeEntitlement = z.infer<typeof FreeEntitlementSchema>;
 
 export const CallAuthorizationSchema = z.object({
   sessionId: z.string(),
@@ -83,8 +99,7 @@ export const CallAuthorizationSchema = z.object({
   maxAllowedSeconds: z.number(),
   gatewayUrl: z.string(),
   token: z.string(),
-  freeSecondsRemaining: z.number(),
-  paidCreditsRemaining: z.number(),
+  remainingTodaySeconds: z.number(),
 });
 
 export type CallAuthorization = z.infer<typeof CallAuthorizationSchema>;
@@ -144,7 +159,6 @@ export const GatewayToClientEventSchema = z.discriminatedUnion("type", [
     sessionId: z.string(),
     durationSeconds: z.number().min(0),
     freeSecondsUsed: z.number().min(0),
-    paidCreditsUsed: z.number().min(0),
   }),
   z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
   z.object({ type: z.literal("closed") }),

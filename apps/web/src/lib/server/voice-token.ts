@@ -18,7 +18,8 @@ function getSigningSecret(): Uint8Array {
  * this call for this user" — it does NOT grant spending on its own. The
  * gateway still re-validates the session's live database state before
  * starting its timer, and the same atomic finalize_call_usage() RPC used
- * since Phase 2 remains the only path that ever debits credits.
+ * since Phase 2 remains the only path that ever records billable usage
+ * against the free daily allowance (Cold Call Gym has no paid credits).
  *
  * maxAllowedSeconds is a signed claim, not a value the browser can supply or
  * alter — tampering with it invalidates the signature (see

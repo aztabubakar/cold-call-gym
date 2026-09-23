@@ -10,8 +10,7 @@ type Props = {
   prospectName: string;
   prospectTitle: string;
   prospectCompany: string;
-  freeSecondsRemaining: number;
-  paidCreditsRemaining: number;
+  remainingTodaySeconds: number;
 };
 
 type Status = "idle" | "authorizing" | "connecting" | "active" | "ending" | "ended" | "blocked";
@@ -22,8 +21,7 @@ export default function CallSession({
   prospectName,
   prospectTitle,
   prospectCompany,
-  freeSecondsRemaining,
-  paidCreditsRemaining,
+  remainingTodaySeconds,
 }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -31,12 +29,12 @@ export default function CallSession({
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [completion, setCompletion] = useState<{
     durationSeconds: number;
     freeSecondsUsed: number;
-    paidCreditsUsed: number;
   } | null>(null);
-  const [finalRemaining, setFinalRemaining] = useState<{ free: number; paid: number } | null>(null);
+  const [finalRemaining, setFinalRemaining] = useState<number | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const levelRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -66,11 +64,8 @@ export default function CallSession({
     try {
       const res = await fetch("/api/entitlement");
       if (res.ok) {
-        const entitlement = (await res.json()) as {
-          freeSecondsRemaining: number;
-          paidCreditsRemaining: number;
-        };
-        setFinalRemaining({ free: entitlement.freeSecondsRemaining, paid: entitlement.paidCreditsRemaining });
+        const entitlement = (await res.json()) as { remainingTodaySeconds: number };
+        setFinalRemaining(entitlement.remainingTodaySeconds);
       }
     } catch {
       // Non-critical: the dashboard will show the correct balance on next load regardless.
@@ -94,7 +89,7 @@ export default function CallSession({
         setRemainingSeconds(event.remainingSeconds);
         return;
       case "quota_exhausted":
-        setError("You've reached this call's time limit. Wrapping up…");
+        setQuotaExhausted(true);
         setStatus("ending");
         return;
       case "completed":
@@ -103,7 +98,6 @@ export default function CallSession({
         setCompletion({
           durationSeconds: event.durationSeconds,
           freeSecondsUsed: event.freeSecondsUsed,
-          paidCreditsUsed: event.paidCreditsUsed,
         });
         setStatus("ended");
         void refreshEntitlement();
@@ -127,6 +121,7 @@ export default function CallSession({
 
   async function startCall() {
     setError(null);
+    setQuotaExhausted(false);
     setStatus("authorizing");
     endedCleanlyRef.current = false;
 
@@ -143,7 +138,6 @@ export default function CallSession({
 
       if (res.status === 402) {
         setStatus("blocked");
-        setError("You're out of practice time for now.");
         return;
       }
       if (!res.ok) {
@@ -200,7 +194,7 @@ export default function CallSession({
     socketRef.current?.send(JSON.stringify({ type: "end" }));
   }
 
-  const displayRemaining = remainingSeconds ?? Math.max(0, freeSecondsRemaining - seconds);
+  const displayRemaining = remainingSeconds ?? Math.max(0, remainingTodaySeconds - seconds);
   const initials = prospectName
     .split(" ")
     .map((part) => part[0])
@@ -239,9 +233,27 @@ export default function CallSession({
               Start mock call
             </button>
           </p>
-          <p className="muted">
-            {formatDuration(freeSecondsRemaining)} free · {paidCreditsRemaining} paid credits
+          <p className="muted">Today&apos;s practice time</p>
+          <p>
+            <b>{formatDuration(remainingTodaySeconds)} remaining</b>
           </p>
+        </>
+      )}
+
+      {status === "blocked" && (
+        <>
+          <p className="accent">
+            <b>DAILY LIMIT REACHED</b>
+          </p>
+          <p className="muted">You&apos;re out of practice time for today. Your allowance will reset automatically.</p>
+          <div className="call-controls">
+            <Link className="button ghost" href="/dashboard">
+              Back to Dashboard
+            </Link>
+            <Link className="button" href="/contact-sales">
+              Contact Sales
+            </Link>
+          </div>
         </>
       )}
 
@@ -268,22 +280,34 @@ export default function CallSession({
         </>
       )}
 
-      {status === "ended" && (
+      {status === "ended" && quotaExhausted && (
+        <>
+          <p className="accent">
+            <b>DAILY LIMIT REACHED</b>
+          </p>
+          <p>You&apos;ve used today&apos;s free practice allowance.</p>
+          <p className="muted">Your allowance will reset automatically.</p>
+          <div className="call-controls">
+            <Link className="button" href="/contact-sales">
+              Contact Sales
+            </Link>
+            <Link className="button ghost" href="/dashboard">
+              Back to Dashboard
+            </Link>
+          </div>
+        </>
+      )}
+
+      {status === "ended" && !quotaExhausted && (
         <>
           <p className="accent">
             <b>CALL COMPLETE</b>
           </p>
           {completion && (
-            <p className="muted">
-              {formatDuration(completion.durationSeconds)} on this call · {completion.freeSecondsUsed}s
-              free, {completion.paidCreditsUsed} paid credits used.
-            </p>
+            <p className="muted">{formatDuration(completion.durationSeconds)} on this call.</p>
           )}
-          {finalRemaining && (
-            <p className="muted">
-              {formatDuration(finalRemaining.free)} free minutes and {finalRemaining.paid} paid credits
-              remaining today.
-            </p>
+          {finalRemaining !== null && (
+            <p className="muted">{formatDuration(finalRemaining)} of practice time remaining today.</p>
           )}
           <p>
             <Link className="button" href="/report/demo">

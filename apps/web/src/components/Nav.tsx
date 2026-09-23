@@ -11,7 +11,7 @@ export default function Nav({ email }: { email: string | null }) {
           <>
             <Link href="/dashboard">Dashboard</Link>
             <Link href="/scenarios">Scenarios</Link>
-            <Link href="/billing">Credits</Link>
+            <Link href="/contact-sales">Contact Sales</Link>
             <span className="nav-email">{email}</span>
             <form action="/auth/sign-out" method="post">
               <button className="button ghost" type="submit">
@@ -21,6 +21,7 @@ export default function Nav({ email }: { email: string | null }) {
           </>
         ) : (
           <>
+            <Link href="/contact-sales">Contact Sales</Link>
             <Link href="/login">Sign in</Link>
             <Link className="button" href="/signup">
               Sign up

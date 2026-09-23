@@ -10,8 +10,8 @@ const FEATURES = [
     body: "Talk/listen ratio, discovery questions, and objection recovery are measured, not guessed.",
   },
   {
-    title: "Practice on your terms",
-    body: "10 free minutes every day. Buy credits only when you want more reps.",
+    title: "Free every day",
+    body: "10 minutes of AI cold-call practice every day, on the house — no card required.",
   },
 ];
 
@@ -63,6 +63,17 @@ export default function Home() {
             <p className="muted">{feature.body}</p>
           </div>
         ))}
+      </section>
+
+      <section className="card panel">
+        <h3>For sales teams</h3>
+        <p className="muted">
+          Need more than 10 minutes a day for yourself or your team? Talk to us about expanded
+          access.
+        </p>
+        <Link className="button ghost" href="/contact-sales">
+          Contact Sales
+        </Link>
       </section>
     </>
   );

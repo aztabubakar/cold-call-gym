@@ -5,23 +5,24 @@ export type FinalizeUsageResult = {
   state: string;
   durationSeconds: number;
   freeSecondsUsed: number;
+  /** LEGACY/DEPRECATED: always 0. Cold Call Gym has no paid credits. */
   paidCreditsUsed: number;
   alreadyFinalized: boolean;
 };
 
 /**
  * Gateway-side call into the SAME finalize_call_usage() Postgres RPC used
- * by the web app (see supabase/migrations/003_entitlement_foundation.sql
- * and apps/web/src/lib/server/entitlement.ts's history). This is Phase 3's
- * trust boundary: the gateway is the only thing that decides
- * `durationSeconds` (from its own monotonic timer — see
- * src/session-runtime.ts), and it calls this RPC directly with its own
- * SUPABASE_SERVICE_ROLE_KEY, never by asking the browser to submit a
- * duration over HTTP. The RPC itself remains atomic (per-session row lock +
- * per-user advisory lock) and idempotent (idempotency_key unique
- * constraint), exactly as verified in the Phase 2 integration tests — this
- * wrapper doesn't change that behavior, it's just a second authorized
- * caller.
+ * by the web app (see supabase/migrations/004_free_plan_entitlement.sql and
+ * apps/web/src/lib/server/entitlement.ts). This is the trust boundary: the
+ * gateway is the only thing that decides `durationSeconds` (from its own
+ * monotonic timer — see src/session-runtime.ts), and it calls this RPC
+ * directly with its own SUPABASE_SERVICE_ROLE_KEY, never by asking the
+ * browser to submit a duration over HTTP. The RPC itself remains atomic
+ * (per-session row lock + per-user advisory lock) and idempotent
+ * (idempotency_key unique constraint), exactly as verified in the Phase 2
+ * integration tests — this wrapper doesn't change that behavior, it's just
+ * a second authorized caller. It never deducts credits (there are none);
+ * it only ever records usage against the free daily allowance.
  */
 export async function finalizeCallUsage(params: {
   sessionId: string;

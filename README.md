@@ -5,29 +5,49 @@ Voice-first AI sales practice SaaS.
 ## Core loop
 Choose scenario → call AI prospect → handle objections → end call → receive coaching → practice again.
 
-## Status: Phase 3 complete (voice gateway session lifecycle)
+## Business model
+
+Cold Call Gym is **free, with no self-service payment flow of any kind**:
+
+- **Free individual access**: every signed-in user gets 10 minutes
+  (600 seconds) of AI voice practice per UTC calendar day, measured
+  authoritatively by the voice gateway. No credit card, no signup fee.
+- **Expanded / team access**: anyone who needs more than the free daily
+  allowance uses the **Contact Sales** form (`/contact-sales`) — there is
+  no checkout, no purchased credits, no subscription plan, and no Stripe
+  integration anywhere in this codebase.
+
+See `docs/MONETIZATION.md` for the full allowance/reset mechanics and
+`docs/SECURITY.md` for how Contact Sales submissions are protected.
+
+## Status: free-plan MVP (Phase 3 voice gateway + free-plan entitlement)
 - Phase 1: auth shell, dashboard, scenario browsing/detail, mock call UI,
   Supabase foundation — see git history for details.
-- Phase 2: server-authoritative entitlement (10 free min/day, UTC boundary,
-  no reset job), immutable credit ledger, atomic + idempotent usage
-  finalization (`finalize_call_usage` Postgres RPC with per-user advisory
-  locking), one-time welcome credits, `GET /api/entitlement`,
+- Phase 2 (retired paid-credit design, see below): server-authoritative
+  entitlement, atomic + idempotent usage finalization (`finalize_call_usage`
+  Postgres RPC with per-user advisory locking), `GET /api/entitlement`,
   `POST /api/voice/session` (call authorization).
-- Phase 3: the voice gateway is now the real, authoritative call pipeline.
+- Phase 3: the voice gateway is the real, authoritative call pipeline.
   `POST /api/voice/session` signs a short-lived JWT
   (`VOICE_GATEWAY_SIGNING_SECRET`) the browser presents to open a
   WebSocket at `services/voice-gateway`; the gateway verifies the token,
   re-validates the session against the live database, meters active call
   time with its own monotonic clock, enforces `maxAllowedSeconds`
   (capped by the gateway's own `MAX_CALL_SECONDS`), and finalizes usage
-  itself via the same Phase 2 RPC — the browser can no longer submit a
-  duration for billing anywhere (the Phase 2 finalize endpoint was
-  removed). See `docs/ARCHITECTURE.md` for the full lifecycle diagram and
-  `docs/SECURITY.md` for the trust-boundary details.
+  itself via the RPC below — the browser can never submit a duration for
+  billing anywhere. See `docs/ARCHITECTURE.md` for the full lifecycle
+  diagram and `docs/SECURITY.md` for the trust-boundary details.
+- **Business model update**: Cold Call Gym no longer has paid credits,
+  purchased overflow, subscriptions, or Stripe. Every user gets a single
+  free 600-second/UTC-day allowance
+  (`supabase/migrations/004_free_plan_entitlement.sql`, rewritten
+  `finalize_call_usage`); expanded access goes through Contact Sales
+  (`supabase/migrations/005_sales_inquiries.sql`,
+  `POST /api/contact-sales`). See `docs/MONETIZATION.md`.
 
 Not yet implemented (later phases — see `docs/CLAUDE_CODE_PLAN.md`):
-real Gemini Live transport, Stripe checkout/webhooks, the full coaching
-evaluator, production deployment.
+real Gemini Live transport, the full coaching evaluator, production
+deployment. There is no payments phase — see "Business model" above.
 
 ## Architecture
 - `apps/web`: Next.js + TypeScript
@@ -40,7 +60,9 @@ Recommended deployment:
 - Web: Vercel
 - Voice gateway: Render or Cloud Run
 - Auth/DB: Supabase
-- Payments: Stripe
+
+There is no payments provider to deploy — Cold Call Gym has no
+self-service payment flow (see "Business model" above).
 
 ## Important
 The starter uses a mock voice provider by default. The Gemini Live provider is deliberately isolated behind an interface and should be implemented against the current official Gemini Live API in Phase 4.
@@ -64,9 +86,9 @@ set, the app still starts and renders (scenario pages fall back to static
 sample data), but auth-gated pages show a "connect Supabase" notice instead
 of live data.
 
-To exercise the Phase 2 entitlement/ledger logic against a real Postgres
-server (no Supabase project needed), see
-`supabase/tests/phase2_entitlement.sql`.
+To exercise the free-plan entitlement logic against a real Postgres server
+(no Supabase project needed), see
+`supabase/tests/free_plan_entitlement.sql`.
 
 Fill in `services/voice-gateway/.env` too (copied from `.env.example`):
 `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` (same project as above, no
