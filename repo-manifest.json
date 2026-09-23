@@ -1,0 +1,20 @@
+{
+  "project": "Cold Call Gym",
+  "status": "phase 3 voice gateway lifecycle complete",
+  "included": [
+    "PRD",
+    "architecture",
+    "monetization",
+    "scenario engine",
+    "scoring",
+    "security",
+    "deployment",
+    "Claude Code phased plan",
+    "Next.js starter UI",
+    "mock WebSocket voice gateway",
+    "Gemini provider placeholder",
+    "Supabase migration/seed",
+    "CI workflow",
+    "unit tests"
+  ]
+}
