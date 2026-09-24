@@ -4,10 +4,11 @@ Build Cold Call Gym as a production-quality voice-first SaaS.
 
 ## Business model
 Free access, no account: submitting name + email + phone at `/start` grants immediate access
-(no password, no email verification, no signup flow). Every access identity gets 10 minutes
-(600 seconds) of AI voice practice per UTC calendar day, no rollover. There is **no self-service
-payment flow** — no purchased credits, no subscriptions, no Stripe integration. Teams or
-individuals who need more than the free daily allowance use the Contact Sales form
+(no password, no email verification, no signup flow). AI voice practice is **free and
+unlimited** — there is no daily allowance, no per-call ceiling, and nothing to run out of. There
+is **no self-service payment flow** — no purchased credits, no subscriptions, no Stripe
+integration. Teams or individuals wanting anything beyond self-service (dedicated support,
+custom scenarios, seats/reporting for a sales team) use the Contact Sales form
 (`/contact-sales`). See `docs/MONETIZATION.md`.
 
 ## Non-negotiables
@@ -19,13 +20,14 @@ individuals who need more than the free daily allowance use the Contact Sales fo
   only to the Voice Gateway, never directly to Gemini.
 - Never put raw name, email, or phone in a cookie, URL, or JWT claim — only opaque, server-issued
   identifiers.
-- Server-side usage is the source of truth.
-- Do not compute or enforce entitlement in client state.
-- The Voice Gateway is authoritative for call duration (its own monotonic clock); the browser's
-  countdown is presentation only.
+- Server-side usage is the source of truth. Practice-time stats shown in the UI are informational
+  only, never a gate.
+- The Voice Gateway is authoritative for recorded call duration (its own monotonic clock); the
+  browser's timer is presentation only. There is no cutoff — calls run until the caller ends
+  them.
 - Do not store raw audio by default.
 - Validate API input, including the `/start` access form and the Contact Sales form.
-- Add tests for entitlement math, access-session mechanics, session lifecycle, and scoring.
+- Add tests for usage-recording math, access-session mechanics, session lifecycle, and scoring.
 - Keep the mock voice provider working for CI/local development.
 - Keep model names in environment variables.
 - Storage abstraction (`apps/web/src/lib/server/store/`): Upstash Redis

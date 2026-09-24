@@ -35,10 +35,8 @@ import { withLock } from "./redis-lock";
  * Concurrency: unlike memory-store.ts (which gets atomicity for free from
  * running synchronously within one process — see its doc comment),
  * network round-trips here mean finalizeUsage() needs a real distributed
- * lock, scoped per access identity, to preserve "two concurrently-active
- * calls for the same access identity never together exceed the daily
- * allowance" — see redis-lock.ts. This mirrors the old Postgres design's
- * per-user advisory lock.
+ * lock, scoped per session, so a read-modify-write race can't finalize the
+ * same session's usage twice — see redis-lock.ts.
  */
 
 const LEAD_TTL_SECONDS = 180 * 24 * 60 * 60; // matches the access cookie's own 180-day lifetime (see access.ts)
@@ -56,8 +54,8 @@ function sessionsByAccessKey(accessId: string): string {
 function salesInquiryKey(id: string): string {
   return `sales_inquiry:${id}`;
 }
-function finalizeLockKey(accessId: string): string {
-  return `lock:finalize:${accessId}`;
+function finalizeLockKey(sessionId: string): string {
+  return `lock:finalize:${sessionId}`;
 }
 
 let client: Redis | null = null;
@@ -117,7 +115,6 @@ export const redisCallSessionStore: CallSessionStore = {
       createdAt: new Date().toISOString(),
       usageFinalizedAt: null,
       durationSeconds: null,
-      freeSecondsUsed: null,
     };
     await Promise.all([
       redis.set(sessionKey(record.id), record, { ex: SESSION_TTL_SECONDS }),
@@ -155,10 +152,9 @@ export const redisCallSessionStore: CallSessionStore = {
       throw new Error(`call session ${params.sessionId} not found`);
     }
 
-    return withLock(redis, finalizeLockKey(initial.accessId), async () => {
-      // Re-read inside the lock — a concurrent finalize for a different
-      // session belonging to the same access identity may have changed
-      // things since the read above.
+    return withLock(redis, finalizeLockKey(initial.id), async () => {
+      // Re-read inside the lock in case another finalize for this exact
+      // session raced the read above.
       const fresh = (await redis.get<CallSessionRecord>(sessionKey(params.sessionId))) ?? initial;
 
       if (fresh.state === "failed" && fresh.usageFinalizedAt === null) {
@@ -167,25 +163,18 @@ export const redisCallSessionStore: CallSessionStore = {
         );
       }
 
-      const others = (await getSessionsForAccess(redis, fresh.accessId)).filter((r) => r.id !== fresh.id);
-      const otherFinalizedSecondsToday = sumUsedToday(others);
-
       const result = computeFinalize({
         session: {
           createdAt: fresh.createdAt,
           usageFinalizedAt: fresh.usageFinalizedAt,
-          state: fresh.state,
           existingDurationSeconds: fresh.durationSeconds,
-          existingFreeSecondsUsed: fresh.freeSecondsUsed,
         },
-        otherFinalizedSecondsToday,
         claimedDurationSeconds: params.durationSeconds,
       });
 
       if (!result.alreadyFinalized) {
         fresh.state = "completed";
         fresh.durationSeconds = result.durationSeconds;
-        fresh.freeSecondsUsed = result.freeSecondsUsed;
         fresh.usageFinalizedAt = result.usageFinalizedAt;
         await redis.set(sessionKey(fresh.id), fresh, { ex: SESSION_TTL_SECONDS });
       }
@@ -194,7 +183,6 @@ export const redisCallSessionStore: CallSessionStore = {
         sessionId: fresh.id,
         state: fresh.state,
         durationSeconds: result.durationSeconds,
-        freeSecondsUsed: result.freeSecondsUsed,
         alreadyFinalized: result.alreadyFinalized,
       };
     });

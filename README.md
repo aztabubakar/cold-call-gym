@@ -11,12 +11,12 @@ objections → end call → receive coaching → practice again tomorrow.
 Cold Call Gym is **free, with no accounts and no self-service payment flow of any kind**:
 
 - **Free access, no account**: submit name, email, and phone at `/start` and get instant access
-  — no password, no email verification, no signup flow. Every access identity gets 10 minutes
-  (600 seconds) of AI voice practice per UTC calendar day, measured authoritatively by the voice
-  gateway.
-- **Expanded / team access**: anyone who needs more than the free daily allowance uses the
-  **Contact Sales** form (`/contact-sales`) — there is no checkout, no purchased credits, no
-  subscription plan, and no Stripe integration anywhere in this codebase.
+  — no password, no email verification, no signup flow. AI voice practice is free and unlimited
+  — no daily allowance, no per-call ceiling.
+- **Expanded / team access**: anyone wanting more than self-service (dedicated support, custom
+  scenarios, seats/reporting for a team) uses the **Contact Sales** form (`/contact-sales`) —
+  there is no checkout, no purchased credits, no subscription plan, and no Stripe integration
+  anywhere in this codebase.
 
 See `docs/MONETIZATION.md` for the full allowance/reset mechanics and `docs/SECURITY.md` for what
 the access session does and does not prove.
@@ -40,8 +40,7 @@ the access session does and does not prove.
   JWT (`VOICE_GATEWAY_SIGNING_SECRET`) the browser presents to open a WebSocket at
   `services/voice-gateway`; the gateway verifies the token, re-validates the session's live state
   (via the web app's internal session API — see `docs/ARCHITECTURE.md`), meters active call time
-  with its own monotonic clock, enforces the signed token's `maxAllowedSeconds` (there is no
-  separate per-call ceiling — a call may run as long as there's daily allowance left), and
+  with its own monotonic clock (there is no cutoff — calls run until the caller ends them), and
   finalizes usage itself — the browser can never submit a duration for billing anywhere.
 - **Real Gemini Live voice (Phase 4).** Browser microphone → Voice Gateway → Gemini Live → native
   audio response → Voice Gateway → browser speaker. The browser never talks to Gemini directly,

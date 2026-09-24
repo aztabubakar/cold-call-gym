@@ -1,79 +1,42 @@
 import "server-only";
-import {
-  DAILY_FREE_SECONDS,
-  computeMaxAllowedSeconds,
-  type FreeEntitlement,
-} from "@cold-call-gym/shared";
+import { type PracticeStats } from "@cold-call-gym/shared";
 import { callSessionStore } from "./store";
 import { getScenarioBySlug } from "../scenarios";
 
 /**
- * Server-authoritative free-plan entitlement snapshot for one access
- * identity (a lead's opaque accessId — see lib/server/access.ts). Never
- * trust a browser-supplied value — this is always recomputed from the
- * call-session store.
- *
- * Cold Call Gym has no accounts, no paid credits, no subscriptions, and
- * no Stripe integration (see docs/MONETIZATION.md) — every access
- * identity gets a single free daily allowance. It resets on a UTC
- * calendar-day boundary. Rather than mutating/decrementing a stored
- * balance at midnight (which would need a cron job), we derive
- * usedTodaySeconds on every read as the sum of finalized usage whose
- * usageFinalizedAt falls within [start of today UTC, now) — so "today's
- * usage" simply stops counting sessions from a previous UTC day without
- * ever needing a reset job. See
- * apps/web/src/lib/server/store/memory-store.ts's finalizeUsage() for the
- * matching write-time implementation.
+ * Practice-time stats for one access identity (a lead's opaque accessId —
+ * see lib/server/access.ts). Cold Call Gym has no accounts, no paid
+ * credits, no subscriptions, and no Stripe integration (see
+ * docs/MONETIZATION.md) — voice practice is free and unlimited. This is
+ * purely informational (e.g. "you've practiced 12m today" on the
+ * dashboard), never a gate: nothing here decides whether a call may start.
+ * See apps/web/src/lib/server/store/memory-store.ts's usedTodaySeconds()
+ * for the matching write-time implementation.
  */
-export async function getEntitlement(accessId: string): Promise<FreeEntitlement> {
-  const startOfDayUtc = new Date();
-  startOfDayUtc.setUTCHours(0, 0, 0, 0);
-  const resetsAt = new Date(startOfDayUtc.getTime() + 24 * 60 * 60 * 1000);
-
+export async function getPracticeStats(accessId: string): Promise<PracticeStats> {
   const usedTodaySeconds = await callSessionStore.usedTodaySeconds(accessId);
-  const remainingTodaySeconds = Math.max(0, DAILY_FREE_SECONDS - usedTodaySeconds);
-
-  return {
-    plan: "free",
-    dailyLimitSeconds: DAILY_FREE_SECONDS,
-    usedTodaySeconds,
-    remainingTodaySeconds,
-    canStartCall: remainingTodaySeconds > 0,
-    resetsAt: resetsAt.toISOString(),
-  };
+  return { usedTodaySeconds };
 }
 
 export type CallAuthorizationCore = {
   sessionId: string;
   scenarioId: string;
   state: "authorized";
-  maxAllowedSeconds: number;
-  remainingTodaySeconds: number;
 };
 
-export type AuthorizeCallResult =
-  | { authorization: CallAuthorizationCore }
-  | { error: "scenario_not_found" }
-  | { error: "no_entitlement"; entitlement: FreeEntitlement };
+export type AuthorizeCallResult = { authorization: CallAuthorizationCore } | { error: "scenario_not_found" };
 
 /**
- * Server-side foundation for authorizing a future voice call. Validates
- * entitlement and creates the call-session record in state `authorized`.
- * Does NOT itself connect to a voice provider or sign the gateway token —
- * signing happens in the API route (lib/server/voice-token.ts) so this
- * module stays focused on entitlement/storage concerns. The signed token
- * is what lets the browser open exactly one voice-gateway WebSocket
- * connection for this session; the gateway re-validates the session's
- * live state before starting anything.
+ * Server-side foundation for authorizing a future voice call. Creates the
+ * call-session record in state `authorized`. Does NOT itself connect to a
+ * voice provider or sign the gateway token — signing happens in the API
+ * route (lib/server/voice-token.ts) so this module stays focused on
+ * storage concerns. The signed token is what lets the browser open exactly
+ * one voice-gateway WebSocket connection for this session; the gateway
+ * re-validates the session's live state before starting anything.
  *
- * This is a soft gate: it reads the current entitlement and rejects when
- * there's no time left today, but doesn't write any usage, so a benign
- * race between two concurrent authorize calls isn't a correctness risk.
- * The HARD, atomic gate is CallSessionStore.finalizeUsage() — the voice
- * gateway (via the internal API, see
- * apps/web/src/app/api/internal/sessions/[id]/route.ts) is the only
- * caller. The web app deliberately does NOT expose an HTTP endpoint that
- * lets the browser submit a duration for finalization.
+ * Calls are free and unlimited, so the only way this can fail is an
+ * unknown scenario.
  */
 export async function authorizeCallSession(
   accessId: string,
@@ -81,13 +44,6 @@ export async function authorizeCallSession(
 ): Promise<AuthorizeCallResult> {
   const scenario = await getScenarioBySlug(scenarioSlug);
   if (!scenario) return { error: "scenario_not_found" };
-
-  const entitlement = await getEntitlement(accessId);
-  if (!entitlement.canStartCall) {
-    return { error: "no_entitlement", entitlement };
-  }
-
-  const maxAllowedSeconds = computeMaxAllowedSeconds(entitlement.remainingTodaySeconds);
 
   const session = await callSessionStore.create({
     accessId,
@@ -100,8 +56,6 @@ export async function authorizeCallSession(
       sessionId: session.id,
       scenarioId: scenario.id,
       state: "authorized",
-      maxAllowedSeconds,
-      remainingTodaySeconds: entitlement.remainingTodaySeconds,
     },
   };
 }

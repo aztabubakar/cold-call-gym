@@ -1,14 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   formatDuration,
-  DAILY_FREE_SECONDS,
   DEFAULT_GEMINI_MODEL,
   GEMINI_INPUT_SAMPLE_RATE_HZ,
   GEMINI_OUTPUT_SAMPLE_RATE_HZ,
   MAX_AUDIO_CHUNK_BASE64_CHARS,
-  computeMaxAllowedSeconds,
   ScenarioSchema,
-  FreeEntitlementSchema,
+  PracticeStatsSchema,
   CallAuthorizationSchema,
   VoiceSessionTokenClaimsSchema,
   ClientToGatewayMessageSchema,
@@ -19,37 +17,6 @@ describe("formatDuration", () => {
   it("pads minutes and seconds", () => expect(formatDuration(65)).toBe("01:05"));
   it("floors fractional seconds", () => expect(formatDuration(59.9)).toBe("00:59"));
   it("clamps negative input to zero", () => expect(formatDuration(-10)).toBe("00:00"));
-});
-
-describe("DAILY_FREE_SECONDS", () => {
-  it("is 10 minutes", () => expect(DAILY_FREE_SECONDS).toBe(600));
-});
-
-describe("computeMaxAllowedSeconds", () => {
-  // Cold Call Gym has no paid credits — a call is authorized for exactly
-  // whatever remains of today's free allowance, with no separate
-  // independent per-call ceiling. The browser has no way to widen this
-  // (see VoiceSessionTokenClaimsSchema's tamper test in
-  // services/voice-gateway/src/lib/token.test.ts).
-  it("1 second remaining authorizes a max of 1 second", () => {
-    expect(computeMaxAllowedSeconds(1)).toBe(1);
-  });
-
-  it("300 seconds remaining authorizes a max of 300 seconds", () => {
-    expect(computeMaxAllowedSeconds(300)).toBe(300);
-  });
-
-  it("a large remaining value is authorized in full — there is no separate per-call ceiling", () => {
-    expect(computeMaxAllowedSeconds(100_000)).toBe(100_000);
-  });
-
-  it("zero remaining authorizes zero", () => {
-    expect(computeMaxAllowedSeconds(0)).toBe(0);
-  });
-
-  it("never returns a negative value", () => {
-    expect(computeMaxAllowedSeconds(-50)).toBe(0);
-  });
 });
 
 describe("ScenarioSchema", () => {
@@ -90,49 +57,27 @@ describe("ScenarioSchema", () => {
   });
 });
 
-describe("FreeEntitlementSchema", () => {
-  it("accepts a well-formed free-plan entitlement snapshot", () => {
-    const result = FreeEntitlementSchema.safeParse({
-      plan: "free",
-      dailyLimitSeconds: 600,
-      usedTodaySeconds: 123,
-      remainingTodaySeconds: 477,
-      canStartCall: true,
-      resetsAt: "2026-01-02T00:00:00.000Z",
-    });
+describe("PracticeStatsSchema", () => {
+  it("accepts a well-formed practice-stats snapshot", () => {
+    const result = PracticeStatsSchema.safeParse({ usedTodaySeconds: 123 });
     expect(result.success).toBe(true);
   });
 
-  it("rejects a plan other than 'free' — there is no paid tier", () => {
-    const result = FreeEntitlementSchema.safeParse({
-      plan: "pro",
-      dailyLimitSeconds: 600,
-      usedTodaySeconds: 0,
-      remainingTodaySeconds: 600,
-      canStartCall: true,
-      resetsAt: "2026-01-02T00:00:00.000Z",
-    });
-    expect(result.success).toBe(false);
-  });
-
   it("rejects a snapshot missing required fields", () => {
-    const result = FreeEntitlementSchema.safeParse({ dailyLimitSeconds: 600 });
+    const result = PracticeStatsSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 
-  it("has no field for a credit balance", () => {
-    const parsed = FreeEntitlementSchema.parse({
-      plan: "free",
-      dailyLimitSeconds: 600,
+  it("has no field for a credit balance or a daily cap — practice is free and unlimited", () => {
+    const parsed = PracticeStatsSchema.parse({
       usedTodaySeconds: 0,
-      remainingTodaySeconds: 600,
-      canStartCall: true,
-      resetsAt: "2026-01-02T00:00:00.000Z",
-      // A caller might try to smuggle a credit balance through — it must be
+      // A caller might try to smuggle these through — they must be
       // silently stripped by the schema, not carried into the parsed shape.
       paidCreditsRemaining: 999,
+      dailyLimitSeconds: 600,
     });
     expect("paidCreditsRemaining" in parsed).toBe(false);
+    expect("dailyLimitSeconds" in parsed).toBe(false);
   });
 });
 
@@ -142,10 +87,8 @@ describe("CallAuthorizationSchema", () => {
       sessionId: "session-1",
       scenarioId: "scenario-1",
       state: "authorized",
-      maxAllowedSeconds: 480,
       gatewayUrl: "http://localhost:8787",
       token: "signed.jwt.token",
-      remainingTodaySeconds: 480,
     });
     expect(result.success).toBe(true);
   });
@@ -155,10 +98,8 @@ describe("CallAuthorizationSchema", () => {
       sessionId: "session-1",
       scenarioId: "scenario-1",
       state: "active",
-      maxAllowedSeconds: 480,
       gatewayUrl: "http://localhost:8787",
       token: "signed.jwt.token",
-      remainingTodaySeconds: 480,
     });
     expect(result.success).toBe(false);
   });
@@ -170,7 +111,6 @@ describe("VoiceSessionTokenClaimsSchema", () => {
       sub: "user-1",
       sessionId: "session-1",
       scenarioId: "scenario-1",
-      maxAllowedSeconds: 780,
       iat: 1_700_000_000,
       exp: 1_700_000_180,
       jti: "token-1",
@@ -178,15 +118,10 @@ describe("VoiceSessionTokenClaimsSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects a non-positive maxAllowedSeconds (the claim a client can't be allowed to widen)", () => {
+  it("rejects a claim set missing required fields", () => {
     const result = VoiceSessionTokenClaimsSchema.safeParse({
       sub: "user-1",
       sessionId: "session-1",
-      scenarioId: "scenario-1",
-      maxAllowedSeconds: 0,
-      iat: 1_700_000_000,
-      exp: 1_700_000_180,
-      jti: "token-1",
     });
     expect(result.success).toBe(false);
   });
@@ -224,19 +159,27 @@ describe("ClientToGatewayMessageSchema", () => {
 });
 
 describe("GatewayToClientEventSchema", () => {
-  it("accepts a completed event with nonnegative usage and no credit field", () => {
+  it("accepts a completed event with nonnegative duration and no credit field", () => {
     const result = GatewayToClientEventSchema.safeParse({
       type: "completed",
       sessionId: "session-1",
       durationSeconds: 42,
-      freeSecondsUsed: 42,
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects a negative remainingSeconds on a quota event", () => {
-    const result = GatewayToClientEventSchema.safeParse({ type: "quota", remainingSeconds: -1 });
+  it("rejects a completed event with a negative duration", () => {
+    const result = GatewayToClientEventSchema.safeParse({
+      type: "completed",
+      sessionId: "session-1",
+      durationSeconds: -1,
+    });
     expect(result.success).toBe(false);
+  });
+
+  it("has no quota/quota_exhausted event — calls are free and unlimited", () => {
+    expect(GatewayToClientEventSchema.safeParse({ type: "quota", remainingSeconds: 10 }).success).toBe(false);
+    expect(GatewayToClientEventSchema.safeParse({ type: "quota_exhausted" }).success).toBe(false);
   });
 
   it("accepts native provider audio output", () => {

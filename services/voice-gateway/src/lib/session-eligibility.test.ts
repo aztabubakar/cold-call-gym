@@ -20,7 +20,6 @@ function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSess
     sub: "access-1",
     sessionId: "session-1",
     scenarioId: "scenario-1",
-    maxAllowedSeconds: 120,
     iat: 0,
     exp: 9_999_999_999,
     jti: "jti-1",

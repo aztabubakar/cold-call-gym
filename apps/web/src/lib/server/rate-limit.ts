@@ -3,8 +3,8 @@ import "server-only";
 /**
  * Minimal in-memory rate-limit hook for public, unauthenticated write
  * endpoints (/api/access, /api/contact-sales). This is a basic abuse
- * deterrent, NOT an identity or entitlement mechanism — daily call-time
- * enforcement never uses this or IP address (see docs/SECURITY.md).
+ * deterrent, NOT an identity mechanism — nothing about access is gated on
+ * this or on IP address (see docs/SECURITY.md).
  *
  * Same limitation as memory-store.ts: this counter lives in process
  * memory, so it resets on every restart/deploy and is not shared across
@@ -29,7 +29,7 @@ export function isRateLimited(key: string, opts: { max: number; windowMs: number
   return entry.count > opts.max;
 }
 
-/** Best-effort client identifier for rate limiting only — never used as an entitlement or identity key. */
+/** Best-effort client identifier for rate limiting only — never used as an identity key. */
 export function clientIpFromHeaders(headers: Headers): string {
   const forwardedFor = headers.get("x-forwarded-for");
   if (forwardedFor) return forwardedFor.split(",")[0]!.trim();

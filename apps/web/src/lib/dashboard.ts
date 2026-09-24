@@ -1,7 +1,7 @@
 import "server-only";
-import { type FreeEntitlement } from "@cold-call-gym/shared";
+import { type PracticeStats } from "@cold-call-gym/shared";
 import { callSessionStore } from "./server/store";
-import { getEntitlement } from "./server/entitlement";
+import { getPracticeStats } from "./server/entitlement";
 import { SCENARIOS } from "./scenarios";
 
 export type RecentSession = {
@@ -19,7 +19,7 @@ export type RecommendedScenario = {
   objective: string;
 };
 
-export type DashboardData = FreeEntitlement & {
+export type DashboardData = PracticeStats & {
   callsThisWeek: number;
   recentSessions: RecentSession[];
   recommended: RecommendedScenario[];
@@ -30,10 +30,9 @@ function scenarioName(slug: string): string {
 }
 
 export async function getDashboardData(accessId: string): Promise<DashboardData> {
-  // Authoritative daily allowance — same server-only computation used by
-  // GET /api/entitlement and the call-authorization path. Never derive
-  // this from a client-supplied value.
-  const entitlement = await getEntitlement(accessId);
+  // Same server-only computation used by GET /api/practice-stats — purely
+  // informational, never a gate (see docs/MONETIZATION.md).
+  const stats = await getPracticeStats(accessId);
 
   const startOfWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const [callsThisWeek, recentRecords] = await Promise.all([
@@ -57,7 +56,7 @@ export async function getDashboardData(accessId: string): Promise<DashboardData>
   }));
 
   return {
-    ...entitlement,
+    ...stats,
     callsThisWeek,
     recentSessions,
     recommended,

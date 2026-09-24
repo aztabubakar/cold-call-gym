@@ -28,8 +28,8 @@ env vars on Vercel: `curl https://<your-app>.vercel.app/api/health`.
 
 Swapping to a different datastore later still means writing one new module against the
 interfaces in `apps/web/src/lib/server/store/types.ts` and changing what `index.ts` exports — no
-other file in the app needs to change. The entitlement math itself (`usage-math.ts`) is pure and
-storage-agnostic and is reused as-is by both implementations.
+other file in the app needs to change. The usage-recording math itself (`usage-math.ts`) is pure
+and storage-agnostic and is reused as-is by both implementations.
 
 ## Web — Vercel
 
@@ -96,16 +96,17 @@ cannot, without a network call) confirm the web app is actually reachable.
 
 ## Production checklist
 - set `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` on the web app and confirm
-  `GET /api/health` reports `"store":"redis"` before depending on correct entitlement/lead-capture
-  behavior in production (see "Production persistence" above) — this is the single most important
-  item on this list for a Vercel deployment
-- verify daily usage never goes negative and never exceeds the 600-second allowance, including
-  under concurrent calls — covered by `apps/web/src/lib/server/store/usage-math.test.ts` (the pure
-  math) and `redis-store.test.ts` (the distributed-lock-backed concurrency guarantee); the
-  in-memory fallback's concurrency guarantee only holds within a single process, so this matters
-  more once you're actually depending on Redis
-- verify call stops at quota limit (see docs/ARCHITECTURE.md's voice
-  session lifecycle section for how `maxAllowedSeconds` is enforced)
+  `GET /api/health` reports `"store":"redis"` before depending on correct usage-recording/
+  lead-capture behavior in production (see "Production persistence" above) — this is the single
+  most important item on this list for a Vercel deployment
+- verify recorded call duration never goes negative and is clamped to wall-clock elapsed time,
+  including under concurrent calls — covered by `apps/web/src/lib/server/store/usage-math.test.ts`
+  (the pure math) and `redis-store.test.ts` (the distributed-lock-backed concurrency guarantee);
+  the in-memory fallback's concurrency guarantee only holds within a single process, so this
+  matters more once you're actually depending on Redis
+- verify a call runs indefinitely and only ends on explicit hang-up, disconnect, or a provider
+  error (see docs/ARCHITECTURE.md's voice session lifecycle section — calls are free and
+  unlimited, there is no cutoff)
 - verify disconnect recovery
 - verify no secrets in browser (`INTERNAL_API_KEY`, `VOICE_GATEWAY_SIGNING_SECRET`,
   `GEMINI_API_KEY`, `UPSTASH_REDIS_REST_TOKEN` — none should ever appear in a `NEXT_PUBLIC_`

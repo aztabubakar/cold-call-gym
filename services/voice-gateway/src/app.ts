@@ -19,7 +19,6 @@ import type { GatewayToClientEvent } from "@cold-call-gym/shared";
 
 export type AppDeps = {
   clock: Clock;
-  quotaIntervalMs: number;
   createProvider: () => VoiceProvider;
   getCallSession: (sessionId: string) => Promise<CallSessionRecord | null>;
   transitionCallSessionState: (sessionId: string, state: string) => Promise<void>;
@@ -35,7 +34,6 @@ export type AppDeps = {
 function defaultDeps(): AppDeps {
   return {
     clock: systemClock,
-    quotaIntervalMs: 15_000,
     createProvider: () =>
       (process.env.VOICE_PROVIDER ?? "mock") === "gemini" ? new GeminiLiveProvider() : new MockVoiceProvider(),
     getCallSession,
@@ -164,7 +162,6 @@ export function buildApp(overrides: Partial<AppDeps> = {}): FastifyInstance {
 
         const runtime = new CallSessionRuntime(session, claims, {
           clock: deps.clock,
-          quotaIntervalMs: deps.quotaIntervalMs,
           log: app.log,
           createProvider: deps.createProvider,
           finalizeCallUsage: deps.finalizeCallUsage,

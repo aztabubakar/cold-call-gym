@@ -56,7 +56,7 @@ export default function StartAccessForm() {
         <b>START PRACTICING FREE</b>
       </p>
       <h1>Get instant access</h1>
-      <p className="muted">10 minutes of AI cold-call practice every day. No account, no password.</p>
+      <p className="muted">Free, unlimited AI cold-call practice. No account, no password.</p>
 
       <form className="form" onSubmit={handleSubmit}>
         <label className="honeypot" aria-hidden="true">

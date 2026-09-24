@@ -21,15 +21,14 @@ import type { GatewayToClientEvent } from "@cold-call-gym/shared";
  * HTTP — this proves the gateway's own wiring end-to-end (auth boundary,
  * WebSocket protocol, lifecycle, duplicate/reconnect rejection) even
  * though it can't prove the real HTTP round-trip. The real store's
- * finalizeUsage() algorithm (atomicity, idempotency, daily-cap clamping)
- * is separately covered by apps/web/src/lib/server/store tests.
+ * finalizeUsage() algorithm (atomicity, idempotency) is separately covered
+ * by apps/web/src/lib/server/store tests.
  */
 
 const SECRET = "e2e-test-signing-secret";
 
 function createFakeStore() {
-  const sessions = new Map<string, CallSessionRecord & { durationSeconds?: number; freeSecondsUsed?: number }>();
-  let freeUsedToday = 0;
+  const sessions = new Map<string, CallSessionRecord & { durationSeconds?: number }>();
 
   return {
     sessions,
@@ -53,24 +52,18 @@ function createFakeStore() {
           sessionId: row.id,
           state: row.state,
           durationSeconds: row.durationSeconds ?? 0,
-          freeSecondsUsed: row.freeSecondsUsed ?? 0,
           alreadyFinalized: true,
         };
       }
 
-      const freeUsed = Math.max(0, Math.min(600 - freeUsedToday, params.durationSeconds));
-      freeUsedToday += freeUsed;
-
       row.state = "completed";
       row.usageFinalizedAt = new Date().toISOString();
       row.durationSeconds = params.durationSeconds;
-      row.freeSecondsUsed = freeUsed;
 
       return {
         sessionId: row.id,
         state: "completed",
         durationSeconds: params.durationSeconds,
-        freeSecondsUsed: freeUsed,
         alreadyFinalized: false,
       };
     },
@@ -95,14 +88,11 @@ function addSession(
   return row;
 }
 
-async function signToken(
-  claims: Partial<{ sub: string; sessionId: string; scenarioId: string; maxAllowedSeconds: number }> = {},
-) {
+async function signToken(claims: Partial<{ sub: string; sessionId: string; scenarioId: string }> = {}) {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({
     sessionId: claims.sessionId ?? "session-1",
     scenarioId: claims.scenarioId ?? "scenario-1",
-    maxAllowedSeconds: claims.maxAllowedSeconds ?? 5,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(claims.sub ?? "access-1")
@@ -155,7 +145,6 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
 
     const deps: Partial<AppDeps> = {
       clock: systemClock,
-      quotaIntervalMs: 60_000, // long enough to not fire during these short tests
       createProvider: () => new MockVoiceProvider(),
       // Wrapped rather than passed directly so a later vi.spyOn(db, "...")
       // in an individual test is observed dynamically via property lookup,
@@ -213,7 +202,6 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
     expect(completed).toMatchObject({ type: "completed", sessionId: session.id });
     if (completed?.type === "completed") {
       expect(completed.durationSeconds).toBeGreaterThanOrEqual(0);
-      expect(completed.freeSecondsUsed).toBeGreaterThanOrEqual(0);
     }
 
     const row = db.sessions.get(session.id)!;
