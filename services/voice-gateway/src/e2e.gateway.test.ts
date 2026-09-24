@@ -155,7 +155,6 @@ describe("voice gateway end-to-end (real server, real WebSocket)", () => {
 
     const deps: Partial<AppDeps> = {
       clock: systemClock,
-      maxCallSecondsCeiling: 1800,
       quotaIntervalMs: 60_000, // long enough to not fire during these short tests
       createProvider: () => new MockVoiceProvider(),
       // Wrapped rather than passed directly so a later vi.spyOn(db, "...")

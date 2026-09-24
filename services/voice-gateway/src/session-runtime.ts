@@ -18,8 +18,6 @@ export type Logger = {
 
 export type CallSessionRuntimeDeps = {
   clock: Clock;
-  /** Gateway's own MAX_CALL_SECONDS safety ceiling, independent of the token. */
-  maxCallSecondsCeiling: number;
   quotaIntervalMs: number;
   log: Logger;
   createProvider: () => VoiceProvider;
@@ -67,10 +65,12 @@ export class CallSessionRuntime {
     private readonly claims: VoiceSessionTokenClaims,
     private readonly deps: CallSessionRuntimeDeps,
   ) {
-    this.effectiveMaxSeconds = Math.max(
-      0,
-      Math.min(claims.maxAllowedSeconds, deps.maxCallSecondsCeiling),
-    );
+    // No independent gateway-side ceiling: the signed token's
+    // maxAllowedSeconds (computed server-side from the daily allowance —
+    // see apps/web/src/lib/server/entitlement.ts) is trusted directly. It
+    // cannot be widened by the browser without invalidating the HMAC
+    // signature (see lib/token.ts).
+    this.effectiveMaxSeconds = Math.max(0, claims.maxAllowedSeconds);
   }
 
   get sessionId(): string {

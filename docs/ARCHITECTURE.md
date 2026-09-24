@@ -212,13 +212,15 @@ duration for billing** — only the gateway can call the internal session API, a
 
 ### Quota enforcement
 
-`effectiveMaxSeconds = min(token.maxAllowedSeconds, gateway's own
-MAX_CALL_SECONDS)` — the gateway applies its own independent ceiling
-(`MAX_CALL_SECONDS` env var, default 1800s) regardless of what a token
-claims, as a defense-in-depth safety cap. A `setTimeout` fires exactly at
-that cutoff to end the call (`{type:"quota_exhausted"}` then finalize);
-a separate `setInterval` (every 15s) sends `{type:"quota", remainingSeconds}`
-purely for the browser's display.
+`effectiveMaxSeconds = token.maxAllowedSeconds` — there is no independent
+gateway-side ceiling. The signed token's `maxAllowedSeconds` (computed
+server-side from the caller's remaining daily allowance — see
+`apps/web/src/lib/server/entitlement.ts`) is trusted directly, since it's
+already bounded by `DAILY_FREE_SECONDS` and cannot be widened by the
+browser without invalidating the HMAC signature. A `setTimeout` fires
+exactly at that cutoff to end the call (`{type:"quota_exhausted"}` then
+finalize); a separate `setInterval` (every 15s) sends
+`{type:"quota", remainingSeconds}` purely for the browser's display.
 
 ### Call lifecycle & disconnect handling
 

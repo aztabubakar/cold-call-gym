@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   formatDuration,
   DAILY_FREE_SECONDS,
-  MAX_CALL_SECONDS,
   DEFAULT_GEMINI_MODEL,
   GEMINI_INPUT_SAMPLE_RATE_HZ,
   GEMINI_OUTPUT_SAMPLE_RATE_HZ,
@@ -26,34 +25,30 @@ describe("DAILY_FREE_SECONDS", () => {
   it("is 10 minutes", () => expect(DAILY_FREE_SECONDS).toBe(600));
 });
 
-describe("MAX_CALL_SECONDS", () => {
-  it("matches the voice-gateway default ceiling", () => expect(MAX_CALL_SECONDS).toBe(1800));
-});
-
 describe("computeMaxAllowedSeconds", () => {
-  // Cold Call Gym has no paid credits — a call is authorized for at most
-  // whatever remains of today's free allowance, capped by the gateway's
-  // absolute safety ceiling. The browser has no way to widen this (see
-  // VoiceSessionTokenClaimsSchema's tamper test in
+  // Cold Call Gym has no paid credits — a call is authorized for exactly
+  // whatever remains of today's free allowance, with no separate
+  // independent per-call ceiling. The browser has no way to widen this
+  // (see VoiceSessionTokenClaimsSchema's tamper test in
   // services/voice-gateway/src/lib/token.test.ts).
   it("1 second remaining authorizes a max of 1 second", () => {
-    expect(computeMaxAllowedSeconds(1, 1800)).toBe(1);
+    expect(computeMaxAllowedSeconds(1)).toBe(1);
   });
 
   it("300 seconds remaining authorizes a max of 300 seconds", () => {
-    expect(computeMaxAllowedSeconds(300, 1800)).toBe(300);
+    expect(computeMaxAllowedSeconds(300)).toBe(300);
   });
 
-  it("remaining greater than MAX_CALL_SECONDS is capped at MAX_CALL_SECONDS", () => {
-    expect(computeMaxAllowedSeconds(5000, 1800)).toBe(1800);
+  it("a large remaining value is authorized in full — there is no separate per-call ceiling", () => {
+    expect(computeMaxAllowedSeconds(100_000)).toBe(100_000);
   });
 
   it("zero remaining authorizes zero", () => {
-    expect(computeMaxAllowedSeconds(0, 1800)).toBe(0);
+    expect(computeMaxAllowedSeconds(0)).toBe(0);
   });
 
   it("never returns a negative value", () => {
-    expect(computeMaxAllowedSeconds(-50, 1800)).toBe(0);
+    expect(computeMaxAllowedSeconds(-50)).toBe(0);
   });
 });
 

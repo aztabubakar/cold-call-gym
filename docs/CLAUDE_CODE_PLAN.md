@@ -66,9 +66,8 @@ behavior.
   completed, with a `failed` branch for pre-active provider failures
 - gateway-authoritative monotonic timer (`process.hrtime.bigint()`); the
   browser's own countdown is presentation-only
-- quota cutoff enforced server-side at
-  `min(token.maxAllowedSeconds, gateway's MAX_CALL_SECONDS)`, with periodic
-  `quota` events for the UI
+- quota cutoff enforced server-side at `token.maxAllowedSeconds` (no
+  separate gateway-side ceiling), with periodic `quota` events for the UI
 - disconnect handling: abrupt close while active still finalizes correctly
   exactly once; pre-active close/failure marks the session `failed` with
   zero usage

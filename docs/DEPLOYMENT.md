@@ -71,8 +71,6 @@ Set:
   without it in that case (`services/voice-gateway/src/lib/config.ts`). Read only by this
   process — never put this in Vercel/the web app's environment (see below).
 - `GEMINI_MODEL` — default `gemini-3.8-live` if unset
-- `MAX_CALL_SECONDS` — default 1800 if unset; the gateway's own absolute safety ceiling,
-  independent of a user's remaining daily allowance (see `docs/MONETIZATION.md`)
 
 **`GEMINI_API_KEY` belongs only on whatever process actually runs the voice gateway.** Do not add
 it to the Vercel project's environment variables unless the voice gateway is itself deployed as a
@@ -107,8 +105,7 @@ cannot, without a network call) confirm the web app is actually reachable.
   in-memory fallback's concurrency guarantee only holds within a single process, so this matters
   more once you're actually depending on Redis
 - verify call stops at quota limit (see docs/ARCHITECTURE.md's voice
-  session lifecycle section for how `maxAllowedSeconds` / `MAX_CALL_SECONDS`
-  interact)
+  session lifecycle section for how `maxAllowedSeconds` is enforced)
 - verify disconnect recovery
 - verify no secrets in browser (`INTERNAL_API_KEY`, `VOICE_GATEWAY_SIGNING_SECRET`,
   `GEMINI_API_KEY`, `UPSTASH_REDIS_REST_TOKEN` — none should ever appear in a `NEXT_PUBLIC_`

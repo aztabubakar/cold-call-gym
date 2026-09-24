@@ -1,7 +1,6 @@
 import "server-only";
 import {
   DAILY_FREE_SECONDS,
-  MAX_CALL_SECONDS,
   computeMaxAllowedSeconds,
   type FreeEntitlement,
 } from "@cold-call-gym/shared";
@@ -88,7 +87,7 @@ export async function authorizeCallSession(
     return { error: "no_entitlement", entitlement };
   }
 
-  const maxAllowedSeconds = computeMaxAllowedSeconds(entitlement.remainingTodaySeconds, MAX_CALL_SECONDS);
+  const maxAllowedSeconds = computeMaxAllowedSeconds(entitlement.remainingTodaySeconds);
 
   const session = await callSessionStore.create({
     accessId,

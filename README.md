@@ -40,9 +40,9 @@ the access session does and does not prove.
   JWT (`VOICE_GATEWAY_SIGNING_SECRET`) the browser presents to open a WebSocket at
   `services/voice-gateway`; the gateway verifies the token, re-validates the session's live state
   (via the web app's internal session API — see `docs/ARCHITECTURE.md`), meters active call time
-  with its own monotonic clock, enforces `maxAllowedSeconds` (capped by the gateway's own
-  `MAX_CALL_SECONDS`), and finalizes usage itself — the browser can never submit a duration for
-  billing anywhere.
+  with its own monotonic clock, enforces the signed token's `maxAllowedSeconds` (there is no
+  separate per-call ceiling — a call may run as long as there's daily allowance left), and
+  finalizes usage itself — the browser can never submit a duration for billing anywhere.
 - **Real Gemini Live voice (Phase 4).** Browser microphone → Voice Gateway → Gemini Live → native
   audio response → Voice Gateway → browser speaker. The browser never talks to Gemini directly,
   and `GEMINI_API_KEY` lives only on the gateway process. `VOICE_PROVIDER=mock` (default) keeps

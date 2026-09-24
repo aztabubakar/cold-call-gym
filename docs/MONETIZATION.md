@@ -54,15 +54,16 @@ A call may only be authorized when `remainingTodaySeconds > 0`. The maximum
 duration a single call is authorized for is:
 
 ```
-maxAllowedSeconds = min(remainingTodaySeconds, MAX_CALL_SECONDS)
+maxAllowedSeconds = max(0, remainingTodaySeconds)
 ```
 
-(`MAX_CALL_SECONDS`, default 1800s, is the voice gateway's own absolute
-safety ceiling, independent of entitlement — see `docs/ARCHITECTURE.md`.)
-Both `remainingTodaySeconds > 0` and this cap are recomputed server-side on
-every authorization; the browser is never trusted to assert either one, and
-the signed voice-session token that carries `maxAllowedSeconds` to the
-gateway cannot be altered without invalidating its signature.
+There is no separate, independent per-call ceiling — a call may run as long
+as there's daily allowance left (see `docs/ARCHITECTURE.md`).
+Both `remainingTodaySeconds > 0` and `maxAllowedSeconds` are recomputed
+server-side on every authorization; the browser is never trusted to assert
+either one, and the signed voice-session token that carries
+`maxAllowedSeconds` to the gateway cannot be altered without invalidating
+its signature.
 
 ## Idempotency
 

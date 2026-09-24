@@ -282,11 +282,6 @@ export function buildPersonaSystemInstruction(scenario: Scenario | null): string
 // self-service payment flow.
 export const DAILY_FREE_SECONDS = 600;
 
-// Hard ceiling on a single call's authorized duration, independent of how
-// much entitlement a user has (mirrors services/voice-gateway's
-// MAX_CALL_SECONDS default).
-export const MAX_CALL_SECONDS = 1800;
-
 // Default Gemini Live model, overridable via the voice gateway's
 // GEMINI_MODEL env var (see services/voice-gateway/src/providers/
 // gemini-live-provider.ts) — kept here as a single source of truth so it's
@@ -307,14 +302,14 @@ export function formatDuration(totalSeconds: number): string {
 
 /**
  * The maximum duration a single call may be authorized for: whatever is
- * left of today's free allowance, capped by the gateway's own absolute
- * safety ceiling. Never negative. Pulled out as its own pure function so
- * the authorization boundary (in particular "a user with less than
- * MAX_CALL_SECONDS remaining can never be authorized for more than they
- * have left") is directly unit-testable without a live database.
+ * left of today's free allowance. There is no separate, independent
+ * per-call ceiling — a call may run as long as there's daily allowance
+ * left. Never negative. Pulled out as its own pure function so the
+ * authorization boundary is directly unit-testable without a live
+ * database.
  */
-export function computeMaxAllowedSeconds(remainingTodaySeconds: number, maxCallSeconds: number): number {
-  return Math.max(0, Math.min(remainingTodaySeconds, maxCallSeconds));
+export function computeMaxAllowedSeconds(remainingTodaySeconds: number): number {
+  return Math.max(0, remainingTodaySeconds);
 }
 
 // ---------------------------------------------------------------------------

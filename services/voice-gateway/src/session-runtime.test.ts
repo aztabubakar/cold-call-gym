@@ -56,9 +56,7 @@ function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSess
   };
 }
 
-function makeDeps(
-  opts: { provider?: FakeProvider; maxCallSecondsCeiling?: number; quotaIntervalMs?: number } = {},
-) {
+function makeDeps(opts: { provider?: FakeProvider; quotaIntervalMs?: number } = {}) {
   const provider = opts.provider ?? new FakeProvider();
   const clock = new FakeClock();
   const events: GatewayToClientEvent[] = [];
@@ -81,7 +79,6 @@ function makeDeps(
 
   const deps: CallSessionRuntimeDeps = {
     clock,
-    maxCallSecondsCeiling: opts.maxCallSecondsCeiling ?? 1800,
     quotaIntervalMs: opts.quotaIntervalMs ?? 15_000,
     log: { info: () => {}, warn: () => {}, error: () => {} },
     createProvider: () => provider,
@@ -218,21 +215,20 @@ describe("CallSessionRuntime", () => {
     expect(finalizeCallUsage).toHaveBeenCalledWith(expect.objectContaining({ durationSeconds: 0 }));
   });
 
-  it("caps the effective max at the gateway's own MAX_CALL_SECONDS ceiling", async () => {
-    const { deps, provider, events } = makeDeps({ maxCallSecondsCeiling: 1800 });
-    const claims = makeClaims({ maxAllowedSeconds: 5000 }); // token asks for more than the ceiling
+  it("honors a large maxAllowedSeconds from the token directly — there is no separate gateway-side ceiling", async () => {
+    const { deps, provider, events } = makeDeps();
+    const claims = makeClaims({ maxAllowedSeconds: 100_000 });
     const runtime = new CallSessionRuntime(makeSession(), claims, deps);
 
     await connectAndActivate(runtime, provider);
 
-    expect(events.find((e) => e.type === "active")).toMatchObject({ maxAllowedSeconds: 1800 });
+    expect(events.find((e) => e.type === "active")).toMatchObject({ maxAllowedSeconds: 100_000 });
   });
 
   it("enforces maxAllowedSeconds: quota exhaustion finalizes exactly once at cutoff", async () => {
     vi.useFakeTimers();
     try {
       const { deps, provider, clock, events, finalizeCallUsage } = makeDeps({
-        maxCallSecondsCeiling: 1800,
         quotaIntervalMs: 15_000,
       });
       const claims = makeClaims({ maxAllowedSeconds: 20 });
@@ -262,7 +258,6 @@ describe("CallSessionRuntime", () => {
     vi.useFakeTimers();
     try {
       const { deps, provider, clock, events } = makeDeps({
-        maxCallSecondsCeiling: 1800,
         quotaIntervalMs: 15_000,
       });
       const claims = makeClaims({ maxAllowedSeconds: 120 });
