@@ -10,8 +10,8 @@ const FEATURES = [
     body: "Talk/listen ratio, discovery questions, and objection recovery are measured, not guessed.",
   },
   {
-    title: "Free every day",
-    body: "10 minutes of AI cold-call practice every day, on the house — no card required.",
+    title: "Free and unlimited",
+    body: "As much AI cold-call practice as you want, on the house — no card, no daily cap.",
   },
 ];
 
@@ -40,8 +40,8 @@ export default function Home() {
 
       <section className="grid">
         <div className="card">
-          <div className="metric">10 min</div>
-          <div className="muted">Free every day</div>
+          <div className="metric">∞</div>
+          <div className="muted">Free, unlimited practice</div>
         </div>
         <div className="card">
           <div className="metric">6</div>
@@ -65,8 +65,7 @@ export default function Home() {
       <section className="card panel">
         <h3>For sales teams</h3>
         <p className="muted">
-          Need more than 10 minutes a day for yourself or your team? Talk to us about expanded
-          access.
+          Want dedicated support, custom scenarios, or reporting for your whole team? Talk to us.
         </p>
         <Link className="button ghost" href="/contact-sales">
           Contact Sales

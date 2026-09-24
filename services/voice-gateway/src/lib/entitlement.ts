@@ -2,7 +2,6 @@ export type FinalizeUsageResult = {
   sessionId: string;
   state: string;
   durationSeconds: number;
-  freeSecondsUsed: number;
   alreadyFinalized: boolean;
 };
 
@@ -23,12 +22,10 @@ function apiKey(): string | null {
  * `durationSeconds` (from its own monotonic timer — see
  * src/session-runtime.ts), and it calls this endpoint directly with its
  * own INTERNAL_API_KEY, never by asking the browser to submit a duration
- * over HTTP. The web app's store remains atomic (synchronous,
- * single-process — see memory-store.ts's doc comment) and idempotent
- * (idempotencyKey), exactly as the old Postgres RPC was; this wrapper
- * doesn't change that behavior, it's just a second authorized caller. It
- * never deducts credits (there are none); it only ever records usage
- * against the free daily allowance.
+ * over HTTP. The web app's store remains atomic and idempotent
+ * (idempotencyKey); this wrapper doesn't change that behavior, it's just
+ * a second authorized caller. Calls are free and unlimited — there are no
+ * credits and nothing is ever deducted.
  */
 export async function finalizeCallUsage(params: {
   sessionId: string;

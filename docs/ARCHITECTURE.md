@@ -35,11 +35,10 @@ how that works.
 ## Voice gateway responsibilities
 - validate the access session/token
 - load scenario/persona
-- check entitlement
+- re-validate the session's live state (ownership, not-already-finalized)
 - connect to the configured voice provider (mock, or real Gemini Live — see "Voice provider" below)
 - relay audio
-- meter time server-side
-- terminate when quota is exhausted
+- meter time server-side (calls are free and unlimited — there is no cutoff)
 - finalize usage (via the web app's internal session API)
 - write session outcome (ditto)
 
@@ -70,7 +69,7 @@ depends on. `index.ts` selects the backing implementation automatically, based o
   advisory lock, different mechanism. `GET /api/health` reports which backend is active
   (`"store":"redis"` or `"store":"memory"`).
 
-Both implementations share the same pure, storage-agnostic entitlement math
+Both implementations share the same pure, storage-agnostic usage-recording math
 (`apps/web/src/lib/server/store/usage-math.ts`) — only how session records are stored/locked
 differs. See `docs/DEPLOYMENT.md`'s "Production persistence" section for setup.
 
@@ -79,26 +78,24 @@ stronger verification step (email OTP, phone verification) could be layered in l
 or as an additional gate before `/call` — without redesigning `LeadStore`, `CallSessionStore`, or
 anything in the voice gateway.
 
-## Entitlement (free plan only)
-Cold Call Gym has no paid credits (see `docs/MONETIZATION.md`) — every access identity gets a
-single free daily allowance (600 seconds/UTC day, no rollover). All entitlement logic lives
+## Practice time (free and unlimited)
+Cold Call Gym has no paid credits and no daily allowance (see `docs/MONETIZATION.md`) — voice
+practice is free and unlimited for every access identity. All usage-recording logic lives
 server-side, split across two layers:
 
 - `apps/web/src/lib/server/entitlement.ts` — server-only module using the `CallSessionStore`
   directly (no network hop needed — it runs in the same process as the store). Exposes
-  `getEntitlement` and `authorizeCallSession`, both keyed by `accessId` (a lead's opaque id — see
-  `docs/SECURITY.md`).
-- `CallSessionStore.finalizeUsage()` — the *only* code path that ever records billable usage,
-  implemented by whichever backend `index.ts` selects (`memory-store.ts` or `redis-store.ts` —
-  see "Storage abstraction" above for what each guarantees).
+  `getPracticeStats` (informational only) and `authorizeCallSession`, both keyed by `accessId` (a
+  lead's opaque id — see `docs/SECURITY.md`).
+- `CallSessionStore.finalizeUsage()` — the *only* code path that ever records a session's final
+  duration, implemented by whichever backend `index.ts` selects (`memory-store.ts` or
+  `redis-store.ts` — see "Storage abstraction" above for what each guarantees).
 
 API surface:
-- `GET /api/entitlement` — the current access identity's free-plan entitlement (`{ plan,
-  dailyLimitSeconds, usedTodaySeconds, remainingTodaySeconds, canStartCall, resetsAt }`). 401 if
-  there's no valid access session.
-- `POST /api/voice/session` — authorizes a call (validates scenario + entitlement, creates an
-  `authorized` call-session record, signs a short-lived voice-gateway token, returns
-  `maxAllowedSeconds`).
+- `GET /api/practice-stats` — the current access identity's practice-time stats (`{
+  usedTodaySeconds }`), purely informational. 401 if there's no valid access session.
+- `POST /api/voice/session` — authorizes a call (validates the scenario, creates an `authorized`
+  call-session record, signs a short-lived voice-gateway token).
 - `POST /api/access` — public. Submits the `/start` form; creates a lead and sets the access
   cookie. See `docs/SECURITY.md`.
 - `POST /api/contact-sales` — public. Records a sales inquiry.
@@ -118,11 +115,11 @@ locked down and why.
 Browser                    Next.js web app              Voice Gateway      Internal session API
    |  POST /api/voice/session   |                            |                    |
    |--------------------------->| validate access session +  |                    |
-   |                            | scenario + entitlement,     |                    |
+   |                            | scenario,                   |                    |
    |                            | create call-session record  |--------------------|
    |                            | sign short-lived JWT        |                    |
    |<---------------------------| {sessionId, gatewayUrl,     |                    |
-   |                            |  token, maxAllowedSeconds}  |                    |
+   |                            |  token}                     |                    |
    |  wss://gateway/ws?token=…                                |                    |
    |----------------------------------------------------------->| verify JWT sig+exp |
    |                                                            | GET session state ->|
@@ -134,7 +131,6 @@ Browser                    Next.js web app              Voice Gateway      Inter
    |<----------------------------------------------------------| {type:"connected"}  |
    |<----------------------------------------------------------| {type:"active", …}  | connecting->active (POST),
    |                                                            | start monotonic timer|
-   |<----------------------------------------------------------| {type:"quota", …}   | (every ~15s)
    |  {type:"end"}  ------------------------------------------->|                     |
    |                                                            | stop timer, close    |
    |                                                            | provider,            |
@@ -159,66 +155,56 @@ on both sides — never sent to the browser). Claims
 (`packages/shared`'s `VoiceSessionTokenClaimsSchema`):
 
 ```
-{ sub, sessionId, scenarioId, maxAllowedSeconds, iat, exp, jti }
+{ sub, sessionId, scenarioId, iat, exp, jti }
 ```
 
 - **`sub` is the lead's opaque access identifier**, never their name, email, or phone. Cold Call
   Gym has no accounts, so there is no "user id" here in an authentication sense — it identifies
-  which access session (and therefore which daily allowance) the call counts against. See
-  `docs/SECURITY.md`.
+  which access session the call belongs to. See `docs/SECURITY.md`.
 - **TTL**: 180 seconds (`VOICE_TOKEN_TTL_SECONDS`) — just enough time to open
   the WebSocket connection, not a session-length credential.
 - **No secrets, no hidden state**: never carries the Gemini key, `INTERNAL_API_KEY`,
   or a scenario's `hidden_state`/persona details.
-- **`maxAllowedSeconds` is signed, not client-suppliable**: the browser
-  receives this value in the `POST /api/voice/session` response purely for
-  display; it has no way to open a WebSocket with a *different* value,
-  because doing so would require forging a valid HMAC signature. Verified:
-  a token with `maxAllowedSeconds` altered post-signing fails verification
-  (`services/voice-gateway/src/lib/token.test.ts`).
-- **The token alone does not authorize spending.** It only proves "the web
-  server recently authorized this call for this access identity." The gateway still
-  re-validates the *live* session state (over the internal session API) — see
-  `evaluateSessionEligibility()`
+- **Calls are free and unlimited** (see `docs/MONETIZATION.md`), so there is no quota claim to
+  protect here — the token exists purely to prove "the web server recently authorized this call
+  for this access identity." Tampering with any claim (e.g. `scenarioId`) invalidates the HMAC
+  signature (`services/voice-gateway/src/lib/token.test.ts`).
+- **The token alone does not authorize connecting indefinitely.** It only proves "the web server
+  recently authorized this call for this access identity." The gateway still re-validates the
+  *live* session state (over the internal session API) — see `evaluateSessionEligibility()`
   (`services/voice-gateway/src/lib/session-eligibility.ts`).
 
 ### Why the gateway's timer is authoritative, not the browser's
 
-The browser runs its own per-second countdown purely for UX smoothness
-between the gateway's periodic `quota` events — it is presentation state
-only and is never sent back to any server as a duration. All billable time
-comes from `CallSessionRuntime` (`services/voice-gateway/src/
-session-runtime.ts`), which:
+The browser runs its own per-second counter purely for UX (the visible call timer) — it is
+presentation state only and is never sent back to any server as a duration. All recorded time
+comes from `CallSessionRuntime` (`services/voice-gateway/src/session-runtime.ts`), which:
 
 - Uses `process.hrtime.bigint()` (a monotonic clock, immune to system-clock
   adjustments) to timestamp the moment the call becomes `active`.
 - Computes `durationSeconds = ceil(elapsedMs / 1000)` when the call ends,
-  for any reason (explicit `end`, disconnect, quota cutoff, provider
-  error) — any nonzero active time bills at least 1 second; truly zero
-  elapsed active time bills zero.
+  for any reason (explicit `end`, disconnect, provider error) — any nonzero
+  active time records at least 1 second; truly zero elapsed active time
+  records zero.
 - Passes that duration — and *only* that duration — to
   `finalizeCallUsage()`, which calls the web app's internal session API's finalize action, using
   the gateway's own `INTERNAL_API_KEY` credential. The client-to-gateway message schema
   (`ClientToGatewayMessageSchema`) has no field for a duration at all, so there's structurally
   nothing for a client to submit.
 - Is guarded so finalization runs at most once per connection no matter
-  which of {explicit `end`, socket close, quota cutoff, provider error} is
+  which of {explicit `end`, socket close, provider error} is
   first to trigger it — backed by the same idempotency guarantee
   (`usageFinalizedAt`, an idempotency key) on the web app's store.
 
 The web app **never exposes any HTTP endpoint that lets the browser submit a
-duration for billing** — only the gateway can call the internal session API, and only with
+duration for finalization** — only the gateway can call the internal session API, and only with
 `INTERNAL_API_KEY`.
 
-### Quota enforcement
+### No quota, no cutoff
 
-`effectiveMaxSeconds = min(token.maxAllowedSeconds, gateway's own
-MAX_CALL_SECONDS)` — the gateway applies its own independent ceiling
-(`MAX_CALL_SECONDS` env var, default 1800s) regardless of what a token
-claims, as a defense-in-depth safety cap. A `setTimeout` fires exactly at
-that cutoff to end the call (`{type:"quota_exhausted"}` then finalize);
-a separate `setInterval` (every 15s) sends `{type:"quota", remainingSeconds}`
-purely for the browser's display.
+Calls are free and unlimited (see `docs/MONETIZATION.md`) — there is no cutoff timer and no
+periodic quota event. A call runs until one of: an explicit `end` message, the socket closing
+(disconnect, backgrounded tab), or the voice provider erroring/closing on its own.
 
 ### Call lifecycle & disconnect handling
 
@@ -268,8 +254,8 @@ returns (`services/voice-gateway/src/providers/voice-provider.ts`).
 no external calls, what CI/tests run against. `VOICE_PROVIDER=gemini` uses
 `GeminiLiveProvider`, a real implementation against the official
 `@google/genai` SDK's Live API. Switching providers changes nothing about
-token issuance, session-eligibility checks, timing, quota enforcement, or
-finalization — only what `CallSessionRuntime` calls to actually talk.
+token issuance, session-eligibility checks, timing, or finalization — only
+what `CallSessionRuntime` calls to actually talk.
 
 **The browser never talks to Gemini directly.** `GEMINI_API_KEY` is read
 only in `services/voice-gateway/src/providers/gemini-live-provider.ts`,

@@ -8,7 +8,7 @@ been removed from the active architecture entirely — the old migrations are ar
 authentication — see `docs/SECURITY.md`). Storage is a pluggable abstraction
 (`apps/web/src/lib/server/store/`) — see "Storage update: durable Redis backend added" below for
 what actually backs it now. The voice gateway is unchanged in spirit — still the authoritative
-timer/quota enforcer — but now reaches the web app's session state over a small internal HTTP API
+timer — but now reaches the web app's session state over a small internal HTTP API
 instead of a shared Postgres connection (see `docs/ARCHITECTURE.md`). Every bullet below that
 mentions Supabase, `call_sessions`, signup/login, or a Postgres RPC describes what was built AT
 THE TIME, not current behavior — see `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and
@@ -40,6 +40,18 @@ current model. The Phase 2/3 bullets below are left as an accurate record
 of what was actually built at the time, not a description of current
 behavior.
 
+## Business model update: unlimited practice time
+The 10-minute/UTC-day free allowance described in "Business model update (post-Phase 3)" below
+has itself been retired. Cold Call Gym's practice time is now **free and unlimited** — no daily
+allowance, no per-call ceiling (`MAX_CALL_SECONDS` was removed first; the daily allowance was
+removed after it). `getEntitlement()`/`FreeEntitlementSchema` became
+`getPracticeStats()`/`PracticeStatsSchema` (purely informational — `GET /api/practice-stats`,
+formerly `GET /api/entitlement`), `computeMaxAllowedSeconds()` and `DAILY_FREE_SECONDS` were
+removed from `packages/shared`, and the voice gateway's quota timer/events were removed
+entirely — see `docs/MONETIZATION.md` and `docs/ARCHITECTURE.md` for the current model. The
+Phase 2/3 bullets below (and the "Business model update (post-Phase 3)" section) are left as an
+accurate record of what was built at the time, not current behavior.
+
 ## Phase 1 — Foundation ✅ complete
 - monorepo installs/builds
 - Supabase auth
@@ -66,9 +78,8 @@ behavior.
   completed, with a `failed` branch for pre-active provider failures
 - gateway-authoritative monotonic timer (`process.hrtime.bigint()`); the
   browser's own countdown is presentation-only
-- quota cutoff enforced server-side at
-  `min(token.maxAllowedSeconds, gateway's MAX_CALL_SECONDS)`, with periodic
-  `quota` events for the UI
+- quota cutoff enforced server-side at `token.maxAllowedSeconds` (no
+  separate gateway-side ceiling), with periodic `quota` events for the UI
 - disconnect handling: abrupt close while active still finalizes correctly
   exactly once; pre-active close/failure marks the session `failed` with
   zero usage

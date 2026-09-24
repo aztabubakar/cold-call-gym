@@ -18,9 +18,6 @@ export type Logger = {
 
 export type CallSessionRuntimeDeps = {
   clock: Clock;
-  /** Gateway's own MAX_CALL_SECONDS safety ceiling, independent of the token. */
-  maxCallSecondsCeiling: number;
-  quotaIntervalMs: number;
   log: Logger;
   createProvider: () => VoiceProvider;
   finalizeCallUsage: (params: {
@@ -38,27 +35,27 @@ type Phase = "connecting" | "active" | "ending" | "completed" | "failed";
 
 /**
  * Owns one authorized call_sessions row for the lifetime of one WebSocket
- * connection. This is where Phase 3's core guarantee lives: billable
+ * connection. This is where Phase 3's core guarantee lives: recorded call
  * duration comes ONLY from this class's own monotonic clock between
  * becoming `active` and ending, never from anything the browser sends.
+ * Calls are free and unlimited (see docs/MONETIZATION.md) — there is no
+ * cutoff timer; a call only ends via explicit `end`, socket close, or a
+ * provider error/close.
  *
  * State machine:
  *   connecting -> active -> ending -> completed
  *   connecting -> failed                          (provider never connected)
  *
- * Finalization (the only path that records billable usage) is guarded so it runs
- * at most once per connection regardless of how many triggers fire —
- * explicit `end`, socket close, quota cutoff, or a provider error can all
- * race, but only the first one does anything; the rest observe the same
- * in-flight/resolved promise. The underlying finalize_call_usage() RPC is
+ * Finalization (the only path that records final duration) is guarded so
+ * it runs at most once per connection regardless of how many triggers fire
+ * — explicit `end`, socket close, or a provider error can all race, but
+ * only the first one does anything; the rest observe the same
+ * in-flight/resolved promise. The underlying store's finalizeUsage() is
  * itself idempotent too, so this is defense in depth, not the only guard.
  */
 export class CallSessionRuntime {
-  private readonly effectiveMaxSeconds: number;
   private phase: Phase = "connecting";
   private activeStartNs: bigint | null = null;
-  private quotaTimer: ReturnType<typeof setInterval> | null = null;
-  private cutoffTimer: ReturnType<typeof setTimeout> | null = null;
   private provider: VoiceProvider | null = null;
   private endPromise: Promise<void> | null = null;
 
@@ -66,12 +63,7 @@ export class CallSessionRuntime {
     private readonly session: CallSessionRecord,
     private readonly claims: VoiceSessionTokenClaims,
     private readonly deps: CallSessionRuntimeDeps,
-  ) {
-    this.effectiveMaxSeconds = Math.max(
-      0,
-      Math.min(claims.maxAllowedSeconds, deps.maxCallSecondsCeiling),
-    );
-  }
+  ) {}
 
   get sessionId(): string {
     return this.session.id;
@@ -218,19 +210,7 @@ export class CallSessionRuntime {
     });
 
     this.deps.log.info({ sessionId: this.sessionId }, "session active");
-    this.deps.send({
-      type: "active",
-      sessionId: this.sessionId,
-      maxAllowedSeconds: this.effectiveMaxSeconds,
-    });
-
-    if (this.effectiveMaxSeconds <= 0) {
-      void this.end("quota_exhausted");
-      return;
-    }
-
-    this.quotaTimer = setInterval(() => this.emitQuotaUpdate(), this.deps.quotaIntervalMs);
-    this.cutoffTimer = setTimeout(() => void this.end("quota_exhausted"), this.effectiveMaxSeconds * 1000);
+    this.deps.send({ type: "active", sessionId: this.sessionId });
   }
 
   private computeElapsedSeconds(): number {
@@ -242,23 +222,6 @@ export class CallSessionRuntime {
     return Math.max(0, Math.ceil(elapsedMs / 1000));
   }
 
-  private emitQuotaUpdate(): void {
-    if (this.phase !== "active") return;
-    const remaining = Math.max(0, this.effectiveMaxSeconds - this.computeElapsedSeconds());
-    this.deps.send({ type: "quota", remainingSeconds: remaining });
-  }
-
-  private clearTimers(): void {
-    if (this.quotaTimer) {
-      clearInterval(this.quotaTimer);
-      this.quotaTimer = null;
-    }
-    if (this.cutoffTimer) {
-      clearTimeout(this.cutoffTimer);
-      this.cutoffTimer = null;
-    }
-  }
-
   /** Provider never reached `active` — no billable time, mark failed, no RPC call. */
   private async handlePreActiveFailure(
     message: string,
@@ -266,7 +229,6 @@ export class CallSessionRuntime {
   ): Promise<void> {
     if (this.phase !== "connecting") return;
     this.phase = "failed";
-    this.clearTimers();
 
     this.deps.log.warn({ sessionId: this.sessionId, reason: message, code }, "session failed before active");
 
@@ -304,11 +266,6 @@ export class CallSessionRuntime {
     }
 
     this.phase = "ending";
-    this.clearTimers();
-
-    if (reason === "quota_exhausted") {
-      this.deps.send({ type: "quota_exhausted" });
-    }
 
     if (this.provider) {
       await this.provider.close().catch((err) => {
@@ -329,18 +286,13 @@ export class CallSessionRuntime {
       });
       this.phase = "completed";
       this.deps.log.info(
-        {
-          sessionId: this.sessionId,
-          durationSeconds: result.durationSeconds,
-          freeSecondsUsed: result.freeSecondsUsed,
-        },
+        { sessionId: this.sessionId, durationSeconds: result.durationSeconds },
         "session completed",
       );
       this.deps.send({
         type: "completed",
         sessionId: this.sessionId,
         durationSeconds: result.durationSeconds,
-        freeSecondsUsed: result.freeSecondsUsed,
       });
     } catch (err) {
       this.deps.log.error({ sessionId: this.sessionId, err: String(err) }, "finalize failed");

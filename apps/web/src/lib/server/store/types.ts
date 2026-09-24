@@ -41,14 +41,12 @@ export type CallSessionRecord = {
   createdAt: string;
   usageFinalizedAt: string | null;
   durationSeconds: number | null;
-  freeSecondsUsed: number | null;
 };
 
 export type FinalizeUsageResult = {
   sessionId: string;
   state: string;
   durationSeconds: number;
-  freeSecondsUsed: number;
   alreadyFinalized: boolean;
 };
 
@@ -77,21 +75,19 @@ export interface CallSessionStore {
   transitionState(id: string, state: CallSessionState): Promise<void>;
   markFailed(id: string): Promise<void>;
   /**
-   * Atomically records billable usage for a session, exactly once. Mirrors
-   * the old finalize_call_usage() Postgres RPC's behavior (see
-   * legacy/supabase/migrations/004_free_plan_entitlement.sql for the
-   * original algorithm this reimplements): clamps the claimed duration to
-   * wall-clock time elapsed since creation, recomputes today's used
-   * seconds from scratch, and caps free_seconds_used at whatever's left of
-   * the daily allowance. A repeated call with the same sessionId is a
-   * no-op that returns the original result with alreadyFinalized: true.
+   * Atomically records a session's final duration, exactly once. Calls are
+   * free and unlimited (see docs/MONETIZATION.md), so this just clamps the
+   * claimed duration to wall-clock time elapsed since creation (defense in
+   * depth against a bad claim) and stores it. A repeated call with the
+   * same sessionId is a no-op that returns the original result with
+   * alreadyFinalized: true.
    */
   finalizeUsage(params: {
     sessionId: string;
     durationSeconds: number;
     idempotencyKey: string;
   }): Promise<FinalizeUsageResult>;
-  /** Seconds already finalized today (UTC) for this access identity. */
+  /** Seconds practiced today (UTC), for informational display only. */
   usedTodaySeconds(accessId: string): Promise<number>;
   /** Most recent sessions for this access identity, newest first. */
   recentForAccess(accessId: string, limit: number): Promise<CallSessionRecord[]>;

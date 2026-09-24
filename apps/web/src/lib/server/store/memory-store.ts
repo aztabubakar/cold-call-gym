@@ -86,7 +86,6 @@ export const memoryCallSessionStore: CallSessionStore = {
       createdAt: new Date().toISOString(),
       usageFinalizedAt: null,
       durationSeconds: null,
-      freeSecondsUsed: null,
     };
     callSessions.set(record.id, record);
     return record;
@@ -120,26 +119,18 @@ export const memoryCallSessionStore: CallSessionStore = {
       throw new Error(`session ${params.sessionId} in state ${record.state} is not eligible for usage finalization`);
     }
 
-    const otherFinalizedSecondsToday = sumUsedToday(
-      Array.from(callSessions.values()).filter((r) => r.accessId === record.accessId && r.id !== record.id),
-    );
-
     const result = computeFinalize({
       session: {
         createdAt: record.createdAt,
         usageFinalizedAt: record.usageFinalizedAt,
-        state: record.state,
         existingDurationSeconds: record.durationSeconds,
-        existingFreeSecondsUsed: record.freeSecondsUsed,
       },
-      otherFinalizedSecondsToday,
       claimedDurationSeconds: params.durationSeconds,
     });
 
     if (!result.alreadyFinalized) {
       record.state = "completed";
       record.durationSeconds = result.durationSeconds;
-      record.freeSecondsUsed = result.freeSecondsUsed;
       record.usageFinalizedAt = result.usageFinalizedAt;
     }
 
@@ -147,7 +138,6 @@ export const memoryCallSessionStore: CallSessionStore = {
       sessionId: record.id,
       state: record.state,
       durationSeconds: result.durationSeconds,
-      freeSecondsUsed: result.freeSecondsUsed,
       alreadyFinalized: result.alreadyFinalized,
     };
   },

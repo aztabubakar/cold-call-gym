@@ -48,7 +48,6 @@ function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSess
     sub: "access-1",
     sessionId: "session-1",
     scenarioId: "scenario-1",
-    maxAllowedSeconds: 120,
     iat: 0,
     exp: 9_999_999_999,
     jti: "jti-1",
@@ -56,9 +55,7 @@ function makeClaims(overrides: Partial<VoiceSessionTokenClaims> = {}): VoiceSess
   };
 }
 
-function makeDeps(
-  opts: { provider?: FakeProvider; maxCallSecondsCeiling?: number; quotaIntervalMs?: number } = {},
-) {
+function makeDeps(opts: { provider?: FakeProvider } = {}) {
   const provider = opts.provider ?? new FakeProvider();
   const clock = new FakeClock();
   const events: GatewayToClientEvent[] = [];
@@ -72,7 +69,6 @@ function makeDeps(
         sessionId: params.sessionId,
         state: "completed",
         durationSeconds: params.durationSeconds,
-        freeSecondsUsed: params.durationSeconds,
         alreadyFinalized: false,
       };
       return result;
@@ -81,8 +77,6 @@ function makeDeps(
 
   const deps: CallSessionRuntimeDeps = {
     clock,
-    maxCallSecondsCeiling: opts.maxCallSecondsCeiling ?? 1800,
-    quotaIntervalMs: opts.quotaIntervalMs ?? 15_000,
     log: { info: () => {}, warn: () => {}, error: () => {} },
     createProvider: () => provider,
     finalizeCallUsage,
@@ -116,7 +110,6 @@ describe("CallSessionRuntime", () => {
     expect(events.find((e) => e.type === "active")).toMatchObject({
       type: "active",
       sessionId: "session-1",
-      maxAllowedSeconds: 120,
     });
   });
 
@@ -218,69 +211,21 @@ describe("CallSessionRuntime", () => {
     expect(finalizeCallUsage).toHaveBeenCalledWith(expect.objectContaining({ durationSeconds: 0 }));
   });
 
-  it("caps the effective max at the gateway's own MAX_CALL_SECONDS ceiling", async () => {
-    const { deps, provider, events } = makeDeps({ maxCallSecondsCeiling: 1800 });
-    const claims = makeClaims({ maxAllowedSeconds: 5000 }); // token asks for more than the ceiling
-    const runtime = new CallSessionRuntime(makeSession(), claims, deps);
-
-    await connectAndActivate(runtime, provider);
-
-    expect(events.find((e) => e.type === "active")).toMatchObject({ maxAllowedSeconds: 1800 });
-  });
-
-  it("enforces maxAllowedSeconds: quota exhaustion finalizes exactly once at cutoff", async () => {
+  it("a call runs indefinitely — no cutoff timer ends it on its own", async () => {
     vi.useFakeTimers();
     try {
-      const { deps, provider, clock, events, finalizeCallUsage } = makeDeps({
-        maxCallSecondsCeiling: 1800,
-        quotaIntervalMs: 15_000,
-      });
-      const claims = makeClaims({ maxAllowedSeconds: 20 });
-      const runtime = new CallSessionRuntime(makeSession(), claims, deps);
+      const { deps, provider, clock, events, finalizeCallUsage } = makeDeps();
+      const runtime = new CallSessionRuntime(makeSession(), makeClaims(), deps);
 
       await runtime.start();
       provider.emit({ type: "connected" });
 
-      clock.advanceMs(20_000);
-      await vi.advanceTimersByTimeAsync(20_000);
+      clock.advanceMs(3_600_000); // a full hour of "elapsed" call time
+      await vi.advanceTimersByTimeAsync(3_600_000);
 
-      expect(finalizeCallUsage).toHaveBeenCalledTimes(1);
-      expect(finalizeCallUsage).toHaveBeenCalledWith(expect.objectContaining({ durationSeconds: 20 }));
-      expect(events.filter((e) => e.type === "quota_exhausted")).toHaveLength(1);
-      expect(events.filter((e) => e.type === "completed")).toHaveLength(1);
-
-      // Triggering another end after quota already finalized must not recharge.
-      runtime.handleClientMessage(JSON.stringify({ type: "end" }));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(finalizeCallUsage).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("emits periodic quota updates with nonnegative remaining seconds", async () => {
-    vi.useFakeTimers();
-    try {
-      const { deps, provider, clock, events } = makeDeps({
-        maxCallSecondsCeiling: 1800,
-        quotaIntervalMs: 15_000,
-      });
-      const claims = makeClaims({ maxAllowedSeconds: 120 });
-      const runtime = new CallSessionRuntime(makeSession(), claims, deps);
-
-      await runtime.start();
-      provider.emit({ type: "connected" });
-
-      clock.advanceMs(15_000);
-      await vi.advanceTimersByTimeAsync(15_000);
-
-      const quotaEvents = events.filter((e) => e.type === "quota");
-      expect(quotaEvents.length).toBeGreaterThan(0);
-      for (const e of quotaEvents) {
-        expect(e).toMatchObject({ type: "quota" });
-        if (e.type === "quota") expect(e.remainingSeconds).toBeGreaterThanOrEqual(0);
-      }
-      expect(quotaEvents.at(-1)).toMatchObject({ remainingSeconds: 105 });
+      expect(runtime.currentPhase).toBe("active");
+      expect(finalizeCallUsage).not.toHaveBeenCalled();
+      expect(events.some((e) => e.type === "completed")).toBe(false);
     } finally {
       vi.useRealTimers();
     }

@@ -9,19 +9,19 @@ import { ACCESS_COOKIE_NAME } from "../access-cookie";
  *
  * This is ACCESS GATING, not authentication. The cookie's value is a
  * server-generated opaque identifier (a lead's id — never their email or
- * phone) that unlocks the practice UI and is used as the key for the
- * daily free-usage allowance. It does not prove who the visitor is: it
- * only proves "this browser previously submitted the /start form and was
- * handed this identifier." Anyone who has the cookie value has the
+ * phone) that unlocks the practice UI. It does not prove who the visitor
+ * is: it only proves "this browser previously submitted the /start form
+ * and was handed this identifier." Anyone who has the cookie value has the
  * access it grants — there is no password, no email/phone verification,
  * and no way to distinguish the real lead from someone who copied their
  * cookie. Clearing cookies (or submitting the form again with different
- * contact info) gets a visitor a brand new daily allowance; see
- * docs/SECURITY.md for the full limitations and how this could be
- * hardened later (e.g. email OTP or phone verification) without
- * redesigning the voice session architecture — the store interfaces in
- * ./store/types.ts are deliberately identity-agnostic about how an
- * accessId came to be trusted.
+ * contact info) gets a visitor a brand new lead id — voice practice is
+ * free and unlimited (see docs/MONETIZATION.md), so this has no scarce
+ * resource to bypass; see docs/SECURITY.md for the full limitations and
+ * how this could be hardened later (e.g. email OTP or phone verification)
+ * without redesigning the voice session architecture — the store
+ * interfaces in ./store/types.ts are deliberately identity-agnostic about
+ * how an accessId came to be trusted.
  */
 
 const ACCESS_COOKIE_MAX_AGE_SECONDS = 180 * 24 * 60 * 60; // 180 days

@@ -11,13 +11,13 @@ export default async function ContactSalesPage() {
       <section className="page-head">
         <div>
           <p className="accent">
-            <b>EXPANDED ACCESS</b>
+            <b>FOR TEAMS</b>
           </p>
           <h1>Contact Sales</h1>
           <p className="muted" style={{ maxWidth: 640 }}>
-            Every Cold Call Gym visitor gets 10 minutes of free AI voice practice every day — no
-            account, no credit card, no self-service payment. Teams and individuals who need more
-            than the free daily allowance can talk to us about expanded access.
+            Every Cold Call Gym visitor gets free, unlimited AI voice practice — no account, no
+            credit card, no self-service payment. Teams and individuals wanting dedicated
+            support, custom scenarios, or reporting can talk to us about what that looks like.
           </p>
         </div>
       </section>

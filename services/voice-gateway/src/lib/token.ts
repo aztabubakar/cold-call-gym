@@ -19,7 +19,7 @@ export function isTokenVerificationConfigured(): boolean {
  * Verifies a signed voice-session token issued by
  * apps/web/src/lib/server/voice-token.ts. Both sides share
  * VOICE_GATEWAY_SIGNING_SECRET — this is the only thing that makes the
- * gateway trust a claim like maxAllowedSeconds without re-deriving it
+ * gateway trust a claim (sessionId, scenarioId) without re-deriving it
  * itself. Signature and expiration are checked by `jose`; claim shape is
  * checked against VoiceSessionTokenClaimsSchema so a structurally valid but
  * unexpected payload is rejected the same as a bad signature.

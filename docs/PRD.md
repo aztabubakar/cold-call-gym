@@ -19,9 +19,9 @@ Make cold-call practice as repeatable as a gym workout: realistic voice reps, im
 5. Choose/randomize prospect
 6. Start call
 7. Speak naturally with AI prospect
-8. End call or hit the daily limit
+8. End call whenever ready — practice is free and unlimited
 9. Get coaching
-10. Practice again tomorrow, or contact sales for expanded access
+10. Practice again anytime, or contact sales for team/enterprise needs
 
 ## Starter scenarios
 - Busy executive

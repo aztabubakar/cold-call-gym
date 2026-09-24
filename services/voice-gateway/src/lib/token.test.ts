@@ -13,7 +13,6 @@ async function sign(
   return new SignJWT({
     sessionId: "session-1",
     scenarioId: "scenario-1",
-    maxAllowedSeconds: 120,
     ...claimsOverrides,
   })
     .setProtectedHeader({ alg: "HS256" })
@@ -39,7 +38,6 @@ describe("verifyVoiceSessionToken", () => {
     if (result.ok) {
       expect(result.claims.sub).toBe("user-1");
       expect(result.claims.sessionId).toBe("session-1");
-      expect(result.claims.maxAllowedSeconds).toBe(120);
     }
   });
 
@@ -60,12 +58,12 @@ describe("verifyVoiceSessionToken", () => {
     expect(result).toEqual({ ok: false, code: "invalid_token" });
   });
 
-  it("rejects a tampered token — altered maxAllowedSeconds invalidates the signature", async () => {
+  it("rejects a tampered token — altering the scenarioId claim invalidates the signature", async () => {
     const token = await sign();
     const [header, payload, signature] = token.split(".");
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString());
     const tamperedPayload = Buffer.from(
-      JSON.stringify({ ...decoded, maxAllowedSeconds: 999_999 }),
+      JSON.stringify({ ...decoded, scenarioId: "a-different-scenario" }),
     ).toString("base64url");
     const tampered = `${header}.${tamperedPayload}.${signature}`;
 

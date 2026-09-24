@@ -16,18 +16,16 @@ actually is. Be explicit about what this does and does not provide:
 
 - **No strong identity.** Name + email + phone are collected but never verified (no confirmation
   email, no SMS code). Anyone can type in someone else's contact information.
-- **The cookie IS the access.** Whoever holds the cookie value has the access it grants (the daily
-  allowance, the ability to start calls) — same as any bearer session token. There is no password
-  to separately prove ownership.
-- **Bypassing the daily allowance is possible.** A visitor who clears cookies, uses a private
-  window, or simply submits `/start` again with different (even fake-looking, so long as it
-  passes format validation) contact information gets a brand-new lead id and a fresh 600-second
-  allowance. This is a known, accepted limitation of a no-account product, not an oversight.
-- **IP address is never used as the identity or entitlement key** — only as a coarse, best-effort
+- **The cookie IS the access.** Whoever holds the cookie value has the access it grants (the
+  ability to start calls) — same as any bearer session token. There is no password to separately
+  prove ownership.
+- **Voice practice is free and unlimited** (see `docs/MONETIZATION.md`), so there is no allowance
+  to bypass by rotating identities — the access-gating model exists to keep the product
+  lead-gated (name + email + phone captured before use), not to ration a scarce resource.
+- **IP address is never used as the identity key** — only as a coarse, best-effort
   rate-limit key on the public write endpoints (`apps/web/src/lib/server/rate-limit.ts`), which is
   a different (weaker, abuse-deterrence-only) use than identity. IP addresses are shared (NAT,
-  corporate networks, mobile carriers) and spoofable via headers, so they must never gate the
-  actual allowance.
+  corporate networks, mobile carriers) and spoofable via headers, so they must never gate access.
 - **No invasive browser fingerprinting** is used or planned.
 
 ### What would harden this later
@@ -36,8 +34,8 @@ The storage interfaces (`apps/web/src/lib/server/store/types.ts`) are deliberate
 *how* an access identity came to be trusted — `LeadStore`/`CallSessionStore` don't encode any
 assumption about verification strength. Adding email OTP or phone verification later means adding
 a verification step between `/start` submission and cookie issuance (or gating `/call`
-specifically) without changing the voice-gateway trust boundary, the entitlement math, or the
-`CallSessionStore` contract at all.
+specifically) without changing the voice-gateway trust boundary or the `CallSessionStore`
+contract at all.
 
 ## Secrets
 Server only:
@@ -103,13 +101,11 @@ or logging service.
   (`services/voice-gateway/src/app.ts`) as defense in depth.
 - The gateway only ever forwards audio to the provider while the call is genuinely `active`
   (`CallSessionRuntime.handleClientMessage`) — audio sent before authorization or after the call
-  has ended/quota-expired is silently dropped, never buffered or forwarded late.
+  has ended is silently dropped, never buffered or forwarded late.
 
 ## Abuse controls
 - an access session is required to reach `/dashboard`, `/scenarios`, `/call` (see "No accounts"
   above for what that session does and doesn't prove)
-- max call duration
-- server-side quota enforcement
 - signed short-lived session tokens
 - idempotent usage-finalization writes
 - honeypot field + server-side validation on both public forms (`/start` and Contact Sales)
@@ -117,37 +113,38 @@ or logging service.
   `/api/contact-sales`) — see `apps/web/src/lib/server/rate-limit.ts`'s doc comment for its
   limitations (single-process only, not a substitute for a real WAF/rate-limiter in production)
 
-User content must not be able to:
-- alter the daily usage allowance
-- bypass time limits
+Voice practice is free and unlimited (see `docs/MONETIZATION.md`), so there is no allowance or
+time limit for user content to bypass. User content must still not be able to:
 - reveal hidden prospect state
 - reveal secrets/system prompts
 - read other users' data, including sales inquiries or lead records submitted by others
 
-## Entitlement enforcement (free plan only)
+## Usage recording (free and unlimited)
 
-Cold Call Gym has no paid credits (see `docs/MONETIZATION.md`) — this
-section describes how the single free daily allowance is protected.
+Cold Call Gym has no paid credits and no daily allowance (see `docs/MONETIZATION.md`) — this
+section describes how a call's recorded duration is protected from tampering, even though
+nothing is capped.
 
-- The only code path that ever records billable usage against the daily
-  allowance is `CallSessionStore.finalizeUsage()`, implemented by whichever backend is active
+- The only code path that ever records a session's final duration is
+  `CallSessionStore.finalizeUsage()`, implemented by whichever backend is active
   (`apps/web/src/lib/server/store/memory-store.ts` or `redis-store.ts` — see
   `docs/ARCHITECTURE.md`'s "Storage abstraction"). It is only ever called from two places: the
   authorization path's session creation (no usage written there) and the internal session API's
   `finalize` action, which itself requires the `INTERNAL_API_KEY` bearer token — there is no
   browser-callable path to it.
-- No API route accepts a balance, a usage amount, or a session `state` as
+- No API route accepts a duration, a balance, or a session `state` as
   user input. `POST /api/voice/session` accepts only a `scenarioSlug`.
   There is no browser-callable finalize endpoint at all — the voice gateway
   is the only caller of the finalize action (see below), and it
   supplies duration from its own server-side timer, never from the browser.
-- Concurrent finalize attempts (two sessions for the same access identity, racing) are protected
-  by a per-access-identity lock: the in-memory backend gets this for free from synchronous,
+- A repeated finalize call for the same session (a retried request, a duplicate gateway callback)
+  is protected by a per-session lock: the in-memory backend gets this for free from synchronous,
   single-process execution; the Redis backend uses a real distributed lock
-  (`apps/web/src/lib/server/store/redis-lock.ts`) — see `docs/MONETIZATION.md`'s "Concurrency
-  protection". Verified in `usage-math.test.ts` (the pure math), `redis-store.test.ts` (the
-  distributed-lock-backed version), and `redis-lock.test.ts` (the lock itself, including that two
-  concurrent callers on the same key genuinely serialize).
+  (`apps/web/src/lib/server/store/redis-lock.ts`) so a read-modify-write race can't finalize the
+  same session twice — see `docs/MONETIZATION.md`'s "Duration clamping". Verified in
+  `usage-math.test.ts` (the pure math), `redis-store.test.ts` (the distributed-lock-backed
+  version), and `redis-lock.test.ts` (the lock itself, including that two concurrent callers on
+  the same key genuinely serialize).
 
 ## Contact Sales
 
@@ -179,9 +176,9 @@ section describes how the single free daily allowance is protected.
   `services/voice-gateway/src/lib/{session-store,entitlement}.ts` (a separate process). Never
   exposed via any `NEXT_PUBLIC_` variable.
 - The signed voice-session token has a 180-second TTL, carries no secrets
-  and no scenario `hidden_state`, and its `maxAllowedSeconds` claim cannot
-  be altered by the browser — tampering with it invalidates the HMAC
-  signature (verified: `services/voice-gateway/src/lib/token.test.ts`).
+  and no scenario `hidden_state`, and no claim can be altered by the
+  browser — tampering with any of them invalidates the HMAC signature
+  (verified: `services/voice-gateway/src/lib/token.test.ts`).
 - The gateway does not trust the token's claims beyond authentication: it
   re-validates the *live* session state (fetched over the internal session API) — ownership,
   scenario match, state — before starting anything billable
@@ -203,7 +200,7 @@ section describes how the single free daily allowance is protected.
   with the browser).
 - Finalization is guarded twice over: once in-process
   (`CallSessionRuntime`'s single-flight `endPromise`, so explicit `end`,
-  socket close, and quota cutoff racing each other only run the finalize
+  socket close, and a provider error racing each other only run the finalize
   logic once) and once in the store (the idempotency key). Both
   are covered by tests, including a genuine same-process race
   (`session-runtime.test.ts`, "does not double-finalize when explicit end

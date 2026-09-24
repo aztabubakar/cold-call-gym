@@ -276,17 +276,6 @@ export function buildPersonaSystemInstruction(scenario: Scenario | null): string
   return lines.filter((line) => line.length > 0).join("\n");
 }
 
-// Cold Call Gym MVP business model: a single free daily allowance, no
-// purchased credits, no subscriptions, no Stripe. Teams wanting more than
-// this contact sales (see apps/web's /contact-sales) — there is no
-// self-service payment flow.
-export const DAILY_FREE_SECONDS = 600;
-
-// Hard ceiling on a single call's authorized duration, independent of how
-// much entitlement a user has (mirrors services/voice-gateway's
-// MAX_CALL_SECONDS default).
-export const MAX_CALL_SECONDS = 1800;
-
 // Default Gemini Live model, overridable via the voice gateway's
 // GEMINI_MODEL env var (see services/voice-gateway/src/providers/
 // gemini-live-provider.ts) — kept here as a single source of truth so it's
@@ -305,44 +294,26 @@ export function formatDuration(totalSeconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-/**
- * The maximum duration a single call may be authorized for: whatever is
- * left of today's free allowance, capped by the gateway's own absolute
- * safety ceiling. Never negative. Pulled out as its own pure function so
- * the authorization boundary (in particular "a user with less than
- * MAX_CALL_SECONDS remaining can never be authorized for more than they
- * have left") is directly unit-testable without a live database.
- */
-export function computeMaxAllowedSeconds(remainingTodaySeconds: number, maxCallSeconds: number): number {
-  return Math.max(0, Math.min(remainingTodaySeconds, maxCallSeconds));
-}
-
 // ---------------------------------------------------------------------------
-// Free-plan entitlement. Server/database-authoritative — see
-// apps/web/src/lib/server/entitlement.ts and docs/MONETIZATION.md. The
-// browser only ever displays this; it never computes or asserts it.
+// Practice stats. Cold Call Gym is free, unlimited voice practice — there is
+// no daily allowance, no cap, and nothing to be "entitled" to. This is a
+// purely informational, server-computed stat (how much you've practiced
+// today) for the dashboard/call UI to display — never a gate. See
+// apps/web/src/lib/server/entitlement.ts and docs/MONETIZATION.md.
 // ---------------------------------------------------------------------------
 
-export const FreeEntitlementSchema = z.object({
-  plan: z.literal("free"),
-  dailyLimitSeconds: z.number(),
+export const PracticeStatsSchema = z.object({
   usedTodaySeconds: z.number(),
-  remainingTodaySeconds: z.number(),
-  canStartCall: z.boolean(),
-  /** ISO timestamp of the next UTC midnight, when the allowance resets. */
-  resetsAt: z.string(),
 });
 
-export type FreeEntitlement = z.infer<typeof FreeEntitlementSchema>;
+export type PracticeStats = z.infer<typeof PracticeStatsSchema>;
 
 export const CallAuthorizationSchema = z.object({
   sessionId: z.string(),
   scenarioId: z.string(),
   state: z.literal("authorized"),
-  maxAllowedSeconds: z.number(),
   gatewayUrl: z.string(),
   token: z.string(),
-  remainingTodaySeconds: z.number(),
 });
 
 export type CallAuthorization = z.infer<typeof CallAuthorizationSchema>;
@@ -354,11 +325,10 @@ export type CallAuthorization = z.infer<typeof CallAuthorizationSchema>;
 // gateway (services/voice-gateway) using the same shared secret
 // (VOICE_GATEWAY_SIGNING_SECRET). Short-lived (see VOICE_TOKEN_TTL_SECONDS)
 // and scoped to exactly one call_sessions row — it authorizes *connecting*,
-// not spending; the gateway still verifies the session's live DB state
-// before starting a timer, and all billing runs through the same atomic
-// finalize_call_usage() RPC used since Phase 2. maxAllowedSeconds is signed
-// alongside sub/sessionId so the browser can never widen its own quota: an
-// altered claim invalidates the signature.
+// not spending. Calls are free and unlimited (see docs/MONETIZATION.md), so
+// there's no quota claim to protect here; the token exists purely to prove
+// "the web server just authorized this specific session for this access
+// identity" before the gateway will start relaying audio.
 // ---------------------------------------------------------------------------
 
 export const VOICE_TOKEN_TTL_SECONDS = 180;
@@ -370,7 +340,6 @@ export const VoiceSessionTokenClaimsSchema = z.object({
   sub: z.string(),
   sessionId: z.string(),
   scenarioId: z.string(),
-  maxAllowedSeconds: z.number().int().positive(),
   iat: z.number().int(),
   exp: z.number().int(),
   jti: z.string(),
@@ -405,7 +374,7 @@ export type ClientToGatewayMessage = z.infer<typeof ClientToGatewayMessageSchema
 
 export const GatewayToClientEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("connected") }),
-  z.object({ type: z.literal("active"), sessionId: z.string(), maxAllowedSeconds: z.number() }),
+  z.object({ type: z.literal("active"), sessionId: z.string() }),
   z.object({ type: z.literal("text"), text: z.string() }),
   // Gemini's input (caller)/output (prospect) transcription, when the
   // provider supports it. UI/debugging only — never required for the call
@@ -423,13 +392,10 @@ export const GatewayToClientEventSchema = z.discriminatedUnion("type", [
   // The provider detected the caller interrupting (barge-in): the browser
   // must immediately stop/clear any queued playback.
   z.object({ type: z.literal("interrupted") }),
-  z.object({ type: z.literal("quota"), remainingSeconds: z.number().min(0) }),
-  z.object({ type: z.literal("quota_exhausted") }),
   z.object({
     type: z.literal("completed"),
     sessionId: z.string(),
     durationSeconds: z.number().min(0),
-    freeSecondsUsed: z.number().min(0),
   }),
   z.object({ type: z.literal("error"), code: z.string(), message: z.string() }),
   z.object({ type: z.literal("closed") }),

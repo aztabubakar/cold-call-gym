@@ -2,11 +2,11 @@ import { z } from "zod";
 
 /**
  * Validation schema for a "Contact Sales" inquiry — the only path to
- * expanded access beyond the free daily allowance, since Cold Call Gym has
- * no self-service payment flow (see docs/MONETIZATION.md). Deliberately
- * free of any server-only import (unlike lib/server/contact-sales.ts) so
- * it can be unit-tested directly without a Next.js server-rendering
- * context.
+ * anything beyond self-service (voice practice itself is free and
+ * unlimited), since Cold Call Gym has no self-service payment flow (see
+ * docs/MONETIZATION.md). Deliberately free of any server-only import
+ * (unlike lib/server/contact-sales.ts) so it can be unit-tested directly
+ * without a Next.js server-rendering context.
  */
 export const ContactSalesInquirySchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(200),

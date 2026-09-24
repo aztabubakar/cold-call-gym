@@ -124,7 +124,7 @@ describe("redis-store", () => {
       idempotencyKey: `usage:${record.id}`,
     });
 
-    expect(result).toMatchObject({ alreadyFinalized: false, durationSeconds: 20, freeSecondsUsed: 20 });
+    expect(result).toMatchObject({ alreadyFinalized: false, durationSeconds: 20 });
     expect(await redisCallSessionStore.usedTodaySeconds("access-1")).toBe(20);
   });
 
@@ -152,7 +152,7 @@ describe("redis-store", () => {
     expect(await redisCallSessionStore.usedTodaySeconds("access-2")).toBe(10);
   });
 
-  it("caps free_seconds_used at what's left of the daily allowance across multiple sessions", async () => {
+  it("sums multiple sessions' full duration for the same access identity — no cap across sessions", async () => {
     const { redisCallSessionStore } = await import("./redis-store");
     const accessId = "access-3";
 
@@ -172,8 +172,8 @@ describe("redis-store", () => {
       idempotencyKey: `usage:${second.id}`,
     });
 
-    expect(result.freeSecondsUsed).toBe(1); // only 1s left of the 600s daily allowance
-    expect(await redisCallSessionStore.usedTodaySeconds(accessId)).toBe(600);
+    expect(result.durationSeconds).toBe(10);
+    expect(await redisCallSessionStore.usedTodaySeconds(accessId)).toBe(609);
   });
 
   it("recentForAccess returns only this access identity's sessions, newest first", async () => {
